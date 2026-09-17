@@ -74,7 +74,7 @@ void AdminPage::save(){
 }
 void AdminPage::buildTasks(QWidget *parent){
     auto *layout=column(parent);auto *splitter=new QSplitter(parent);layout->addWidget(splitter,1);
-    auto *left=new QWidget(splitter);left->setMinimumWidth(140);left->setMaximumWidth(190);auto *leftLayout=column(left);auto *list=new QListWidget(left);leftLayout->addWidget(list);
+    auto *left=new QWidget(splitter);left->setMinimumWidth(140);left->setMaximumWidth(190);auto *leftLayout=column(left);leftLayout->setAlignment(Qt::AlignTop);auto *list=new QListWidget(left);list->setMinimumHeight(120);list->setMaximumHeight(240);leftLayout->addWidget(list);
     auto *detail=new QWidget(splitter);auto *details=column(detail);splitter->setStretchFactor(1,1);
     auto items=std::make_shared<QJsonArray>(draft_.value("project").toObject().value("tasks").toArray());
     auto active=std::make_shared<SchemaEditor *>(nullptr);const auto taskRule=QJsonObject{{"$ref","#/$defs/task"}};
