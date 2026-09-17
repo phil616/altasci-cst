@@ -61,6 +61,8 @@ QJsonObject readJson(const QString &path) {
 
 ProjectConfigService::ProjectConfigService(ConfigurationValidator validator) : validator_(std::move(validator)) {}
 ValidationIssues ProjectConfigService::validate(const QJsonObject &document) const { return validator_.validate(document); }
+ValidationIssues ProjectConfigService::validateForRun(const QJsonObject &document) const { return validator_.validateForRun(document); }
+ValidationIssues ProjectConfigService::validateForSync(const QJsonObject &document) const { return validator_.validateForSync(document); }
 QJsonObject ProjectConfigService::load(const QString &path) const {
     const auto document = normalizeProjectPaths(readJson(path));
     const auto issues = validate(document);
@@ -73,14 +75,11 @@ void ProjectConfigService::save(const QString &path, const QJsonObject &document
     if (!issues.isEmpty()) throw ConfigurationError(issues);
     saveJson(path, normalized);
 }
-QJsonObject ProjectConfigService::create(const QString &name, const QString &sourceDirectory, const QString &gitExecutable) const {
+QJsonObject ProjectConfigService::create(const QString &name) const {
     const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    // A new editable draft intentionally contains no invented executable or endpoint.
-    // It cannot be saved or run until the administrator supplies a task and repository.
     return {{"schemaVersion", 1}, {"project", QJsonObject{
         {"id", id}, {"name", name}, {"description", ""},
-        {"source", QJsonObject{{"repositoryUrl", ""}, {"branch", "main"}, {"workingDirectory", sourceDirectory},
-                                {"gitExecutable", gitExecutable}, {"credentialTarget", "CST/git/" + id + '/'}}},
+        {"source", QJsonObject{}},
         {"toolDirectories", QJsonArray{}}, {"requiredPorts", QJsonArray{}}, {"tasks", QJsonArray{}},
         {"userActions", QJsonArray{}}, {"settings", QJsonObject{{"portReclaimTimeoutMs", 15000}, {"maxAncestorEscalation", 8}}}
     }}};

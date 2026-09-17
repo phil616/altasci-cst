@@ -97,7 +97,7 @@ void ProjectRuntimeService::start() {
     queue_.enqueue([this] { event(RuntimeEvent::Start); }, [this, project, document, cancel, operationId, failure, empty] {
         enum class Stage { Preflight, Ports, Tasks }; auto stage = Stage::Preflight;
         try {
-            const auto issues = configuration_.validate(document); if (!issues.isEmpty()) throw ConfigurationError(issues);
+            const auto issues = configuration_.validateForRun(document); if (!issues.isEmpty()) throw ConfigurationError(issues);
             cancel->check();
             if (storageDirectory_.isEmpty() || !QDir().mkpath(storageDirectory_ + "/locks")) throw std::runtime_error("项目数据目录未初始化");
             projectLock_ = std::make_unique<QLockFile>(storageDirectory_ + "/locks/" + project.value("id").toString() + ".lock");
@@ -108,8 +108,10 @@ void ProjectRuntimeService::start() {
             supervisor_.preflight(project, *cancel);
             queue_.post([this] { event(RuntimeEvent::ChecksPassed); }); stage = Stage::Ports;
             const auto settings = project.value("settings").toObject();
+            const auto portReclaimTimeoutMs = settings.contains("portReclaimTimeoutMs") ? settings.value("portReclaimTimeoutMs").toInt() : 15000;
+            const auto maxAncestorEscalation = settings.contains("maxAncestorEscalation") ? settings.value("maxAncestorEscalation").toInt() : 8;
             ports_.reclaim(PortReclaimService::requirements(project.value("requiredPorts").toArray()),
-                settings.value("portReclaimTimeoutMs").toInt(), settings.value("maxAncestorEscalation").toInt(), {}, *cancel);
+                portReclaimTimeoutMs, maxAncestorEscalation, {}, *cancel);
             cancel->check(); queue_.post([this] { event(RuntimeEvent::PortsFree); }); stage = Stage::Tasks;
             supervisor_.start(project, operationId, *cancel);
             cancel->check(); *empty = supervisor_.empty();
@@ -170,6 +172,8 @@ SyncRequest ProjectRuntimeService::syncRequest() const {
 }
 void ProjectRuntimeService::synchronize() {
     if (!editable() || queue_.busy() || editing_ || current_.isEmpty()) { emit operationFinished("同步要求项目已停止且无未保存编辑", false); return; }
+    const auto issues = configuration_.validateForSync(current_);
+    if (!issues.isEmpty()) { emit operationFinished(QString::fromUtf8(ConfigurationError(issues).what()), false); return; }
     newOperation(); const auto request = syncRequest(); cancel_ = std::make_shared<Cancellation>(); const auto cancel = cancel_;
     auto head = std::make_shared<QString>();
     queue_.enqueue([this] { if (!editable() || editing_) throw std::runtime_error("当前状态禁止同步"); event(RuntimeEvent::Sync); },

@@ -14,6 +14,7 @@ class DomainTests final : public QObject {
     QJsonObject example_;
     const ProjectPaths paths_{"C:\\Program Files\\CST", "C:\\ProgramData\\CST", "C:\\Windows"};
     ValidationIssues validate(const QJsonObject &document) const { return ConfigurationValidator(schema_, paths_).validate(document); }
+    ValidationIssues validateRun(const QJsonObject &document) const { return ConfigurationValidator(schema_, paths_).validateForRun(document); }
     QJsonObject changedTask(const QString &key, const QJsonValue &value) const {
         auto document = example_;
         auto project = document["project"].toObject();
@@ -53,7 +54,8 @@ private slots:
         QVERIFY(!validate(changedTask("workingDirectory", "{{UNKNOWN}}\\x")).isEmpty());
         QVERIFY(!validate(changedTask("workingDirectory", "relative\\x")).isEmpty());
         auto readiness = task["readiness"].toObject(); readiness["probes"] = QJsonArray{};
-        QVERIFY(!validate(changedTask("readiness", readiness)).isEmpty());
+        QVERIFY(validate(changedTask("readiness", readiness)).isEmpty());
+        QVERIFY(!validateRun(changedTask("readiness", readiness)).isEmpty());
         auto env = task["environment"].toObject(); env["variables"] = QJsonObject{{"export A", "x"}};
         QVERIFY(!validate(changedTask("environment", env)).isEmpty());
     }

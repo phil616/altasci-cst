@@ -37,6 +37,17 @@ private slots:
         QVERIFY_THROWS_EXCEPTION(std::runtime_error, catalog.project(id));
         QVERIFY(QFile::exists(directory.filePath("export.json")));
     }
+    void incompleteProjectPersists() {
+        QTemporaryDir directory;
+        ProjectConfigService config(ConfigurationValidator(readJson(CST_SOURCE_DIR "/config/cst-project.schema.json"), {}));
+        ProjectCatalogService catalog(directory.path(), config);
+        const auto draft = config.create("只有名称");
+        QVERIFY(config.validate(draft).isEmpty());
+        const auto id = catalog.importProject(draft);
+        QCOMPARE(catalog.project(id), draft);
+        QCOMPARE(catalog.entries().first().name, QString("只有名称"));
+        QVERIFY(!config.validateForRun(catalog.project(id)).isEmpty());
+    }
     void invalidCatalog() {
         QTemporaryDir directory;
         ProjectConfigService config(ConfigurationValidator(readJson(CST_SOURCE_DIR "/config/cst-project.schema.json"), {}));
@@ -45,11 +56,14 @@ private slots:
         QVERIFY_THROWS_EXCEPTION(std::runtime_error, catalog.entries());
         QVERIFY_THROWS_EXCEPTION(std::runtime_error, catalog.project("../../file"));
     }
-    void draftRequiresRealInputs() {
+    void draftAllowsIncomplete() {
         ProjectConfigService config(ConfigurationValidator(readJson(CST_SOURCE_DIR "/config/cst-project.schema.json"), {}));
-        const auto draft = config.create("新项目", "C:/projects/new", "C:/Git/git.exe");
-        QVERIFY(!config.validate(draft).isEmpty());
+        const auto draft = config.create("新项目");
+        QVERIFY(config.validate(draft).isEmpty());
         QVERIFY(!draft["project"].toObject()["id"].toString().isEmpty());
+        QCOMPARE(draft["project"].toObject()["name"].toString(), QString("新项目"));
+        QVERIFY(draft["project"].toObject()["tasks"].toArray().isEmpty());
+        QVERIFY(!config.validateForRun(draft).isEmpty());
     }
 };
 QTEST_GUILESS_MAIN(ConfigTests)

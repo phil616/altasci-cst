@@ -23,7 +23,6 @@
 #include <QTableWidget>
 #include <QUrl>
 #include <QVBoxLayout>
-#include <QUuid>
 #include <algorithm>
 #include <functional>
 
@@ -212,7 +211,7 @@ void AdminPage::showPage(int index){if(index>=0&&index<navigation_->count())navi
 void AdminPage::createProject(){
     if(modified_){emit error("请先保存或放弃当前修改");return;}
     bool ok=false;const auto name=QInputDialog::getText(this,"创建项目","项目名称",QLineEdit::Normal,{},&ok).trimmed();if(!ok||name.isEmpty())return;
-    draft_=configuration_.create(name,"C:\\CSTProjects\\"+QUuid::createUuid().toString(QUuid::WithoutBraces),"C:\\Program Files\\Git\\cmd\\git.exe");
+    draft_=configuration_.create(name);
     newProject_=true;dirty();rebuild();navigation_->setCurrentRow(0);
 }
 void AdminPage::importProject(){

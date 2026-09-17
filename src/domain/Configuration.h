@@ -25,6 +25,8 @@ class ConfigurationValidator {
 public:
     explicit ConfigurationValidator(QJsonObject schema, ProjectPaths paths);
     ValidationIssues validate(const QJsonObject &document) const;
+    ValidationIssues validateForRun(const QJsonObject &document) const;
+    ValidationIssues validateForSync(const QJsonObject &document) const;
 private:
     QJsonObject schema_;
     ProjectPaths paths_;

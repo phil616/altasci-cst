@@ -21,7 +21,9 @@ public:
     QJsonObject load(const QString &path) const;
     void save(const QString &path, const QJsonObject &document) const;
     ValidationIssues validate(const QJsonObject &document) const;
-    QJsonObject create(const QString &name, const QString &sourceDirectory, const QString &gitExecutable) const;
+    ValidationIssues validateForRun(const QJsonObject &document) const;
+    ValidationIssues validateForSync(const QJsonObject &document) const;
+    QJsonObject create(const QString &name) const;
 private:
     ConfigurationValidator validator_;
 };

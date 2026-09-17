@@ -276,33 +276,56 @@ ValidationIssues ConfigurationValidator::validate(const QJsonObject &document) c
     const auto project = document.value("project").toObject();
     const auto source = project.value("source").toObject();
     const auto projectId = project.value("id").toString();
-    const auto directory = source.value("workingDirectory").toString();
+    const auto directory = source.value("workingDirectory").toString().trimmed();
     const QMap<QString, QString> variables{{"PROJECT_DIR", directory}, {"DATA_DIR", paths_.dataDirectory(projectId)}, {"LOG_DIR", paths_.logDirectory(projectId)}};
     const auto fail = [&](const QString &path, const QString &message) { issues.append({"/project/" + path, message}); };
+    const auto nonEmpty = [](const QString &text) { return !text.trimmed().isEmpty(); };
+    const auto validId = [](const QString &id) {
+        static const QRegularExpression pattern("^[a-z][a-z0-9-]{1,62}[a-z0-9]$");
+        return pattern.match(id).hasMatch();
+    };
     const auto expanded = [&](const QString &text, const QString &path) {
         try { return expandPlaceholders(text, variables); }
         catch (const std::exception &e) { fail(path, QString::fromUtf8(e.what())); return QString{}; }
     };
     const auto absolute = [&](const QString &text, const QString &path, bool allowExpansion) {
+        if (text.trimmed().isEmpty()) return QString{};
         const auto result = allowExpansion ? expanded(text, path) : text;
         if (!isWindowsAbsolutePath(result) || (!allowExpansion && (result.contains("{{") || result.contains("}}"))))
             fail(path, "必须是 Windows 绝对路径");
         return result;
     };
-    absolute(directory, "source/workingDirectory", false);
-    absolute(source.value("gitExecutable").toString(), "source/gitExecutable", false);
-    for (const auto &reserved : {paths_.installDirectory, paths_.storageDirectory, paths_.windowsDirectory})
-        if (isWithinWindowsPath(directory, reserved)) fail("source/workingDirectory", "源码目录不得位于安装、数据或系统目录内");
-    if (!isAllowedUrl(source.value("repositoryUrl").toString(), true)) fail("source/repositoryUrl", "仓库必须为无凭据、查询参数和片段的 HTTPS URL");
-    const auto credential = "CST/git/" + projectId + '/' + QUrl(source.value("repositoryUrl").toString()).host();
-    if (source.value("credentialTarget").toString() != credential) fail("source/credentialTarget", "凭据名称必须为 " + credential);
-    const auto branch = source.value("branch").toString();
-    if (branch.startsWith('-') || branch.startsWith('/') || branch.endsWith('/') || branch.endsWith('.') ||
-        branch.contains("..") || branch.contains("@{") || branch.contains("//") || branch == "@" ||
-        branch.contains(QRegularExpression("[\\x00-\\x20~^:?*\\[\\\\\\x7f]"))) fail("source/branch", "Git 分支名称无效");
-    for (const auto &part : branch.split('/')) if (part.startsWith('.') || part.endsWith(".lock")) fail("source/branch", "Git 分支名称无效");
+
+    const auto repository = source.value("repositoryUrl").toString().trimmed();
+    if (nonEmpty(repository) && !isAllowedUrl(repository, true))
+        fail("source/repositoryUrl", "仓库必须为无凭据、查询参数和片段的 HTTPS URL");
+    if (nonEmpty(directory)) {
+        absolute(directory, "source/workingDirectory", false);
+        for (const auto &reserved : {paths_.installDirectory, paths_.storageDirectory, paths_.windowsDirectory})
+            if (isWithinWindowsPath(directory, reserved)) fail("source/workingDirectory", "源码目录不得位于安装、数据或系统目录内");
+    }
+    const auto gitExecutable = source.value("gitExecutable").toString().trimmed();
+    if (nonEmpty(gitExecutable)) absolute(gitExecutable, "source/gitExecutable", false);
+    const auto credentialTarget = source.value("credentialTarget").toString().trimmed();
+    if (nonEmpty(credentialTarget)) {
+        const auto expected = "CST/git/" + projectId + '/' + (nonEmpty(repository) ? QUrl(repository).host() : QString{});
+        if (credentialTarget != expected) fail("source/credentialTarget", "凭据名称必须为 " + expected);
+    }
+    const auto branch = source.value("branch").toString().trimmed();
+    if (nonEmpty(branch)) {
+        const auto branchInvalid = branch.startsWith('-') || branch.startsWith('/') || branch.endsWith('/') || branch.endsWith('.') ||
+            branch.contains("..") || branch.contains("@{") || branch.contains("//") || branch == "@" ||
+            branch.contains(QRegularExpression("[\\x00-\\x20~^:?*\\[\\\\\\x7f]"));
+        if (branchInvalid) fail("source/branch", "Git 分支名称无效");
+        for (const auto &part : branch.split('/')) if (part.startsWith('.') || part.endsWith(".lock")) fail("source/branch", "Git 分支名称无效");
+    }
+
     const auto tools = project.value("toolDirectories").toArray();
-    for (qsizetype i = 0; i < tools.size(); ++i) absolute(tools[i].toString(), "toolDirectories/" + QString::number(i), true);
+    for (qsizetype i = 0; i < tools.size(); ++i) {
+        const auto tool = tools[i].toString().trimmed();
+        if (nonEmpty(tool)) absolute(tool, "toolDirectories/" + QString::number(i), true);
+    }
+
     QSet<QString> taskIds, commandIds, actionIds;
     QSet<int> taskOrders, actionOrders;
     const auto unique = [&](auto &set, const auto &value, const QString &path) {
@@ -314,65 +337,220 @@ ValidationIssues ConfigurationValidator::validate(const QJsonObject &document) c
     for (qsizetype i = 0; i < tasks.size(); ++i) {
         const auto task = tasks[i].toObject();
         const auto path = "tasks/" + QString::number(i) + '/';
-        const auto id = task.value("id").toString();
-        unique(taskIds, id, path + "id");
-        unique(taskOrders, task.value("order").toInt(), path + "order");
-        absolute(task.value("workingDirectory").toString(), path + "workingDirectory", true);
+        const auto id = task.value("id").toString().trimmed();
+        if (nonEmpty(id)) {
+            if (!validId(id)) fail(path + "id", "任务标识格式无效");
+            unique(taskIds, id, path + "id");
+        }
+        if (task.contains("order")) unique(taskOrders, task.value("order").toInt(), path + "order");
+        const auto taskDirectory = task.value("workingDirectory").toString().trimmed();
+        if (nonEmpty(taskDirectory)) absolute(taskDirectory, path + "workingDirectory", true);
         const auto env = task.value("environment").toObject();
         for (const auto &file : env.value("envFiles").toArray()) {
+            if (!nonEmpty(file.toString())) continue;
             const auto envPath = absolute(file.toString(), path + "environment/envFiles", true);
-            if (!isWithinWindowsPath(envPath, paths_.dataDirectory(projectId))) fail(path + "environment/envFiles", "环境文件必须位于项目数据目录");
+            if (nonEmpty(envPath) && !isWithinWindowsPath(envPath, paths_.dataDirectory(projectId)))
+                fail(path + "environment/envFiles", "环境文件必须位于项目数据目录");
         }
         const auto envVariables = env.value("variables").toObject();
-        for (auto it = envVariables.begin(); it != envVariables.end(); ++it) expanded(it.value().toString(), path + "environment/variables/" + it.key());
+        for (auto it = envVariables.begin(); it != envVariables.end(); ++it)
+            if (nonEmpty(it.value().toString())) expanded(it.value().toString(), path + "environment/variables/" + it.key());
         auto commands = task.value("prepareCommands").toArray();
         const auto prepareCount = commands.size();
         commands.append(task.value("serviceCommand"));
         for (qsizetype j = 0; j < commands.size(); ++j) {
             const auto command = commands[j].toObject();
+            if (command.isEmpty()) continue;
             const bool service = j == prepareCount;
             const auto cp = path + (service ? QStringLiteral("serviceCommand/") : "prepareCommands/" + QString::number(j) + '/');
-            unique(commandIds, command.value("id").toString(), cp + "id");
-            if ((service && command.value("timeoutMs").toInt() != 0) || (!service && command.value("timeoutMs").toInt() == 0)) fail(cp + "timeoutMs", "服务超时必须为 0，准备命令超时必须大于 0");
-            if (command.value("mode") == "exec") {
-                const auto program = expanded(command.value("program").toString(), cp + "program");
-                if (program.endsWith(".cmd", Qt::CaseInsensitive) || program.endsWith(".bat", Qt::CaseInsensitive)) fail(cp + "program", "批处理必须使用 shell 模式");
-                if ((program.contains('/') || program.contains('\\') || program.contains(':')) && !isWindowsAbsolutePath(program)) fail(cp + "program", "带目录的程序路径必须是绝对路径");
-                for (const auto &arg : command.value("arguments").toArray()) expanded(arg.toString(), cp + "arguments");
-            } else expanded(command.value("script").toString(), cp + "script");
-        }
-        for (const auto &probeValue : task.value("readiness").toObject().value("probes").toArray()) {
-            const auto probe = probeValue.toObject();
-            if (probe.value("type") == "http") {
-                if (!isAllowedUrl(expanded(probe.value("url").toString(), path + "readiness/probes/url"))) fail(path + "readiness/probes", "HTTP 探针 URL 无效");
-            } else {
-                bool found = false;
-                for (const auto &portValue : ports) {
-                    const auto port = portValue.toObject();
-                    if (port.value("protocol") == "tcp" && port.value("port") == probe.value("port") &&
-                        port.value("ownerTaskId") == id && addressesConflict(port.value("address").toString(), probe.value("address").toString())) found = true;
+            const auto commandId = command.value("id").toString().trimmed();
+            if (nonEmpty(commandId)) {
+                if (!validId(commandId)) fail(cp + "id", "命令标识格式无效");
+                unique(commandIds, commandId, cp + "id");
+            }
+            const auto mode = command.value("mode").toString();
+            if (command.contains("timeoutMs")) {
+                const auto timeout = command.value("timeoutMs").toInt();
+                if (service && timeout != 0) fail(cp + "timeoutMs", "服务超时必须为 0");
+                if (!service && timeout <= 0) fail(cp + "timeoutMs", "准备命令超时必须大于 0");
+            }
+            if (mode == "exec") {
+                if (command.contains("script") && nonEmpty(command.value("script").toString())) fail(cp + "script", "exec 模式不能配置脚本");
+                const auto program = command.value("program").toString().trimmed();
+                if (nonEmpty(program)) {
+                    const auto expandedProgram = expanded(program, cp + "program");
+                    if (expandedProgram.endsWith(".cmd", Qt::CaseInsensitive) || expandedProgram.endsWith(".bat", Qt::CaseInsensitive))
+                        fail(cp + "program", "批处理必须使用 shell 模式");
+                    if ((expandedProgram.contains('/') || expandedProgram.contains('\\') || expandedProgram.contains(':')) && !isWindowsAbsolutePath(expandedProgram))
+                        fail(cp + "program", "带目录的程序路径必须是绝对路径");
                 }
-                if (!found) fail(path + "readiness/probes", "TCP 探针必须匹配归属当前任务的 requiredPorts");
+                for (const auto &arg : command.value("arguments").toArray())
+                    if (nonEmpty(arg.toString())) expanded(arg.toString(), cp + "arguments");
+            } else if (mode == "shell") {
+                if (command.contains("program") && nonEmpty(command.value("program").toString())) fail(cp + "program", "shell 模式不能配置程序");
+                if (!command.value("arguments").toArray().isEmpty()) fail(cp + "arguments", "shell 模式不能配置参数");
+                const auto script = command.value("script").toString();
+                if (nonEmpty(script)) expanded(script, cp + "script");
+            }
+        }
+        const auto probes = task.value("readiness").toObject().value("probes").toArray();
+        for (const auto &probeValue : probes) {
+            const auto probe = probeValue.toObject();
+            const auto type = probe.value("type").toString();
+            if (type == "http") {
+                const auto url = probe.value("url").toString().trimmed();
+                if (nonEmpty(url)) {
+                    const auto expandedUrl = expanded(url, path + "readiness/probes/url");
+                    if (nonEmpty(expandedUrl) && !isAllowedUrl(expandedUrl)) fail(path + "readiness/probes", "HTTP 探针 URL 无效");
+                }
+            } else if (type == "tcp") {
+                const auto address = probe.value("address").toString().trimmed();
+                const auto port = probe.value("port").toInt();
+                if (nonEmpty(address) && port > 0) {
+                    bool found = false;
+                    for (const auto &portValue : ports) {
+                        const auto required = portValue.toObject();
+                        if (required.value("protocol") == "tcp" && required.value("port") == port &&
+                            required.value("ownerTaskId") == id && addressesConflict(required.value("address").toString(), address)) found = true;
+                    }
+                    if (!found) fail(path + "readiness/probes", "TCP 探针必须匹配归属当前任务的 requiredPorts");
+                }
             }
         }
     }
+
     QSet<QString> portKeys;
     for (qsizetype i = 0; i < ports.size(); ++i) {
         const auto port = ports[i].toObject();
         const auto path = "requiredPorts/" + QString::number(i);
-        const QHostAddress address(port.value("address").toString());
-        if (address.isNull()) fail(path + "/address", "端口地址必须为 IPv4 或 IPv6 地址");
-        if (!taskIds.contains(port.value("ownerTaskId").toString())) fail(path + "/ownerTaskId", "任务不存在");
-        unique(portKeys, port.value("protocol").toString() + '/' + address.toString() + '/' + QString::number(port.value("port").toInt()), path);
+        const auto addressText = port.value("address").toString().trimmed();
+        const auto owner = port.value("ownerTaskId").toString().trimmed();
+        const auto protocol = port.value("protocol").toString();
+        if (nonEmpty(owner) && !validId(owner)) fail(path + "/ownerTaskId", "所属任务标识格式无效");
+        const auto portNumber = port.value("port").toInt();
+        if (nonEmpty(addressText) && QHostAddress(addressText).isNull()) fail(path + "/address", "端口地址必须为 IPv4 或 IPv6 地址");
+        if (nonEmpty(owner) && !taskIds.contains(owner)) fail(path + "/ownerTaskId", "任务不存在");
+        if (nonEmpty(protocol) && nonEmpty(addressText) && portNumber > 0)
+            unique(portKeys, protocol + '/' + QHostAddress(addressText).toString() + '/' + QString::number(portNumber), path);
     }
+
     const auto actions = project.value("userActions").toArray();
     for (qsizetype i = 0; i < actions.size(); ++i) {
         const auto action = actions[i].toObject();
         const auto path = "userActions/" + QString::number(i) + '/';
-        unique(actionIds, action.value("id").toString(), path + "id");
-        unique(actionOrders, action.value("order").toInt(), path + "order");
-        if (!isAllowedUrl(expanded(action.value("url").toString(), path + "url"))) fail(path + "url", "仅允许绝对 HTTP/HTTPS URL");
+        const auto id = action.value("id").toString().trimmed();
+        if (nonEmpty(id)) {
+            if (!validId(id)) fail(path + "id", "入口标识格式无效");
+            unique(actionIds, id, path + "id");
+        }
+        if (action.contains("order")) unique(actionOrders, action.value("order").toInt(), path + "order");
+        const auto url = action.value("url").toString().trimmed();
+        if (nonEmpty(url)) {
+            const auto expandedUrl = expanded(url, path + "url");
+            if (nonEmpty(expandedUrl) && !isAllowedUrl(expandedUrl)) fail(path + "url", "仅允许绝对 HTTP/HTTPS URL");
+        }
     }
     return issues;
 }
+
+ValidationIssues ConfigurationValidator::validateForRun(const QJsonObject &document) const {
+    auto issues = validate(document);
+    const auto project = document.value("project").toObject();
+    const auto source = project.value("source").toObject();
+    const auto fail = [&](const QString &path, const QString &message) { issues.append({"/project/" + path, message}); };
+    const auto nonEmpty = [](const QString &text) { return !text.trimmed().isEmpty(); };
+    if (!nonEmpty(project.value("name").toString())) fail("name", "项目名称不能为空");
+    if (!nonEmpty(source.value("workingDirectory").toString())) fail("source/workingDirectory", "启动前必须配置源码或工作目录");
+    const auto tasks = project.value("tasks").toArray();
+    if (tasks.isEmpty()) fail("tasks", "至少配置一个任务后才能启动");
+    for (qsizetype i = 0; i < tasks.size(); ++i) {
+        const auto task = tasks[i].toObject();
+        const auto path = "tasks/" + QString::number(i) + '/';
+        if (!nonEmpty(task.value("id").toString())) fail(path + "id", "任务标识不能为空");
+        if (!nonEmpty(task.value("name").toString())) fail(path + "name", "任务名称不能为空");
+        if (!nonEmpty(task.value("workingDirectory").toString())) fail(path + "workingDirectory", "任务工作目录不能为空");
+        const auto service = task.value("serviceCommand").toObject();
+        const auto servicePath = path + "serviceCommand/";
+        if (service.isEmpty()) {
+            fail(path + "serviceCommand", "必须配置长期服务命令");
+        } else {
+            const auto mode = service.value("mode").toString();
+            if (mode == "exec") {
+                if (!nonEmpty(service.value("program").toString())) fail(servicePath + "program", "必须配置程序");
+                if (!service.contains("timeoutMs") || service.value("timeoutMs").toInt() != 0) fail(servicePath + "timeoutMs", "服务超时必须为 0");
+                if (service.value("successExitCodes").toArray().isEmpty()) fail(servicePath + "successExitCodes", "至少配置一个成功退出码");
+            } else if (mode == "shell") {
+                if (!nonEmpty(service.value("script").toString())) fail(servicePath + "script", "必须配置脚本");
+                if (!service.contains("timeoutMs") || service.value("timeoutMs").toInt() != 0) fail(servicePath + "timeoutMs", "服务超时必须为 0");
+                if (service.value("successExitCodes").toArray().isEmpty()) fail(servicePath + "successExitCodes", "至少配置一个成功退出码");
+            } else {
+                fail(servicePath + "mode", "必须选择 exec 或 shell");
+            }
+        }
+        const auto prepares = task.value("prepareCommands").toArray();
+        for (qsizetype j = 0; j < prepares.size(); ++j) {
+            const auto command = prepares[j].toObject();
+            const auto cp = path + "prepareCommands/" + QString::number(j) + '/';
+            const auto mode = command.value("mode").toString();
+            const auto timeout = command.value("timeoutMs").toInt();
+            if (mode == "exec") {
+                if (!nonEmpty(command.value("program").toString())) fail(cp + "program", "必须配置程序");
+                if (!command.contains("timeoutMs") || timeout <= 0) fail(cp + "timeoutMs", "准备命令超时必须大于 0");
+                if (command.value("successExitCodes").toArray().isEmpty()) fail(cp + "successExitCodes", "至少配置一个成功退出码");
+            } else if (mode == "shell") {
+                if (!nonEmpty(command.value("script").toString())) fail(cp + "script", "必须配置脚本");
+                if (!command.contains("timeoutMs") || timeout <= 0) fail(cp + "timeoutMs", "准备命令超时必须大于 0");
+                if (command.value("successExitCodes").toArray().isEmpty()) fail(cp + "successExitCodes", "至少配置一个成功退出码");
+            } else {
+                fail(cp + "mode", "必须选择 exec 或 shell");
+            }
+        }
+        const auto readiness = task.value("readiness").toObject();
+        if (readiness.isEmpty()) {
+            fail(path + "readiness", "必须配置就绪检查");
+        } else {
+            const auto probes = readiness.value("probes").toArray();
+            if (probes.isEmpty()) fail(path + "readiness/probes", "至少配置一个就绪探针");
+            for (qsizetype j = 0; j < probes.size(); ++j) {
+                const auto probe = probes[j].toObject();
+                const auto pp = path + "readiness/probes/" + QString::number(j) + '/';
+                const auto type = probe.value("type").toString();
+                if (type == "tcp") {
+                    if (!nonEmpty(probe.value("address").toString())) fail(pp + "address", "探针地址不能为空");
+                    if (probe.value("port").toInt() <= 0) fail(pp + "port", "探针端口必须大于 0");
+                    if (probe.value("connectTimeoutMs").toInt() <= 0) fail(pp + "connectTimeoutMs", "连接超时必须大于 0");
+                } else if (type == "http") {
+                    if (!nonEmpty(probe.value("url").toString())) fail(pp + "url", "探针 URL 不能为空");
+                    if (probe.value("expectedStatusCodes").toArray().isEmpty()) fail(pp + "expectedStatusCodes", "至少配置一个预期状态码");
+                    if (probe.value("requestTimeoutMs").toInt() <= 0) fail(pp + "requestTimeoutMs", "请求超时必须大于 0");
+                } else {
+                    fail(pp + "type", "探针类型必须为 tcp 或 http");
+                }
+            }
+        }
+        const auto restart = task.value("restartPolicy").toObject();
+        if (restart.isEmpty()) fail(path + "restartPolicy", "必须配置重启策略");
+        else {
+            const auto rp = path + "restartPolicy/";
+            if (!restart.contains("mode") || restart.value("mode").toString() != "on_failure") fail(rp + "mode", "重启策略模式必须为 on_failure");
+            if (restart.value("maxRestarts").toInt() <= 0) fail(rp + "maxRestarts", "最大重启次数必须大于 0");
+            if (restart.value("windowSeconds").toInt() <= 0) fail(rp + "windowSeconds", "统计窗口必须大于 0");
+            if (restart.value("backoffSeconds").toInt() <= 0) fail(rp + "backoffSeconds", "初始退避必须大于 0");
+            if (restart.value("maxBackoffSeconds").toInt() <= 0) fail(rp + "maxBackoffSeconds", "最大退避必须大于 0");
+        }
+    }
+    return issues;
+}
+
+ValidationIssues ConfigurationValidator::validateForSync(const QJsonObject &document) const {
+    auto issues = validate(document);
+    const auto source = document.value("project").toObject().value("source").toObject();
+    const auto fail = [&](const QString &path, const QString &message) { issues.append({"/project/" + path, message}); };
+    if (source.value("repositoryUrl").toString().trimmed().isEmpty()) fail("source/repositoryUrl", "同步前必须配置 HTTPS 仓库地址");
+    if (source.value("branch").toString().trimmed().isEmpty()) fail("source/branch", "同步前必须配置分支");
+    if (source.value("workingDirectory").toString().trimmed().isEmpty()) fail("source/workingDirectory", "同步前必须配置源码目录");
+    if (source.value("gitExecutable").toString().trimmed().isEmpty()) fail("source/gitExecutable", "同步前必须配置 Git 可执行文件");
+    return issues;
+}
+
 }
