@@ -1,5 +1,6 @@
 #include <QCoreApplication>
 #include <QCommandLineParser>
+#include <QCommandLineOption>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -14,9 +15,9 @@
 
 int main(int argc,char **argv){
     QCoreApplication application(argc,argv);QCommandLineParser parser;parser.addHelpOption();
-    parser.addOptions({{{"p","port"},"监听端口","port","0"},{{"a","address"},"绑定地址","address","127.0.0.1"},
-        {{"protocol"},"tcp 或 udp","protocol","tcp"},{{"depth"},"生成的子进程层数","depth","0"},
-        {{"respawn"},"子进程退出后重生"},{{"ignore-break"},"忽略控制台停止信号"},{{"pid-file"},"追加进程 ID 的文件","path"}});
+    parser.addOptions({QCommandLineOption(QStringList{"p","port"},"监听端口","port","0"),QCommandLineOption(QStringList{"a","address"},"绑定地址","address","127.0.0.1"),
+        QCommandLineOption("protocol","tcp 或 udp","protocol","tcp"),QCommandLineOption("depth","生成的子进程层数","depth","0"),
+        QCommandLineOption("respawn","子进程退出后重生"),QCommandLineOption("ignore-break","忽略控制台停止信号"),QCommandLineOption("pid-file","追加进程 ID 的文件","path")});
     parser.process(application);
     const auto port=parser.value("port").toUShort();const auto address=QHostAddress(parser.value("address"));const auto protocol=parser.value("protocol");
     if(address.isNull()||(protocol!="tcp"&&protocol!="udp"))return 2;

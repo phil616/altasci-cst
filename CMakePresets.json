@@ -20,7 +20,7 @@
   "buildPresets": [
     {"name": "windows-debug", "configurePreset": "windows-debug", "configuration": "Debug"},
     {"name": "windows-release", "configurePreset": "windows-release", "configuration": "Release"},
-    {"name": "windows-package-build", "configurePreset": "windows-package", "configuration": "Release"},
+    {"name": "windows-package-build", "configurePreset": "windows-package", "configuration": "Release", "nativeToolOptions": ["-k", "0"]},
     {"name": "windows-package", "configurePreset": "windows-package", "configuration": "Release", "targets": ["package-installer"]},
     {"name": "windows-production-build", "configurePreset": "windows-package-production", "configuration": "Release"},
     {"name": "windows-production-package", "configurePreset": "windows-package-production", "configuration": "Release", "targets": ["package-installer"]}

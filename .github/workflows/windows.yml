@@ -37,12 +37,18 @@ jobs:
               }
             }
           }
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: tools-cache
         with:
           path: C:/cst-tools
           key: cst-windows-qt6.11.2-ifw4.11.0-cmake4.4.3-git2.55.0-v1
       - name: Install pinned build tools
         run: ./scripts/install-ci-tools.ps1 -Destination C:/cst-tools
+      - uses: actions/cache/save@v4
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        with:
+          path: C:/cst-tools
+          key: cst-windows-qt6.11.2-ifw4.11.0-cmake4.4.3-git2.55.0-v1
       - name: Build, test and package
         run: cmake --workflow --preset windows-package
       - name: Record build information
