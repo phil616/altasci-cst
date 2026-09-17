@@ -3,15 +3,21 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 New-Item -ItemType Directory -Force $Destination | Out-Null
 
+function Get-WebText([string]$Url) {
+    $content = (Invoke-WebRequest $Url -MaximumRetryCount 3).Content
+    if ($content -is [byte[]]) { return [Text.Encoding]::UTF8.GetString($content) }
+    return [string]$content
+}
+
 function Get-Archive([string]$Url, [string]$Path, [string]$ChecksumUrl) {
     Invoke-WebRequest $Url -OutFile $Path -MaximumRetryCount 3
     if ($ChecksumUrl) {
-        $expected = (Invoke-WebRequest $ChecksumUrl -MaximumRetryCount 3).Content.Trim().Split(' ')[0]
+        $expected = (Get-WebText $ChecksumUrl).Trim().Split(' ')[0]
         if ((Get-FileHash $Path -Algorithm SHA1).Hash -ine $expected) { throw "Checksum mismatch: $Url" }
     }
 }
 function Install-QtArchives([string]$Repository, [string]$PackageName, [string]$ExpectedVersion, [string]$Target, [string[]]$Prefixes) {
-    [xml]$index = (Invoke-WebRequest "$Repository/Updates.xml" -MaximumRetryCount 3).Content
+    [xml]$index = Get-WebText "$Repository/Updates.xml"
     $package = @($index.Updates.PackageUpdate | Where-Object Name -eq $PackageName)
     if ($package.Count -ne 1 -or -not $package[0].Version.StartsWith($ExpectedVersion + '-')) { throw "Unexpected Qt repository version for $PackageName" }
     $package = $package[0]
@@ -40,7 +46,7 @@ $cmake = Join-Path $Destination 'cmake-4.4.3-windows-x86_64'
 if (-not (Test-Path "$cmake/bin/cmake.exe")) {
     $archive = Join-Path $Destination 'cmake.zip'
     Get-Archive 'https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-windows-x86_64.zip' $archive ''
-    $checksums = (Invoke-WebRequest 'https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-SHA-256.txt').Content
+    $checksums = Get-WebText 'https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-SHA-256.txt'
     $line = ($checksums -split "`n" | Where-Object { $_ -match 'cmake-4.4.3-windows-x86_64.zip$' })
     $expected = ($line -split '\s+')[0]
     if ((Get-FileHash $archive -Algorithm SHA256).Hash -ine $expected) { throw 'CMake checksum mismatch' }

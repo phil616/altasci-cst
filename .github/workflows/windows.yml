@@ -32,7 +32,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'MSVC environment initialization failed' }
           foreach ($entry in $environment) {
             if ($entry -match '^([^=]+)=(.*)$') {
-              "$($Matches[1])=$($Matches[2])" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+              if ([Environment]::GetEnvironmentVariable($Matches[1]) -cne $Matches[2]) {
+                "$($Matches[1])=$($Matches[2])" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+              }
             }
           }
       - uses: actions/cache@v4
