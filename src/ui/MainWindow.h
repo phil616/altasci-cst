@@ -1,6 +1,7 @@
 #pragma once
 #include "pages/admin/AdminPage.h"
 #include "pages/user/UserPage.h"
+#include <QLabel>
 #include <QMainWindow>
 
 namespace cst {
@@ -11,7 +12,10 @@ public:
     void activate();
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 private:
+    void positionClosingOverlay();
     ProjectRuntimeService &runtime_;
     UserPage *user_;
     AdminPage *admin_;
@@ -19,6 +23,8 @@ private:
     QLabel *projectName_;
     QLabel *state_;
     QLabel *head_;
+    QLabel *operation_;
+    QWidget *central_;
     QLabel *closingOverlay_;
     bool mayClose_ = false;
 };

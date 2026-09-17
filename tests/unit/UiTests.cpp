@@ -1,5 +1,6 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
+#include "ui/UiSupport.h"
 #include <QDir>
 #include <QTabWidget>
 #include <QSpinBox>
@@ -47,8 +48,12 @@ private slots:
     void initTestCase(){applyTheme(*qobject_cast<QApplication *>(QCoreApplication::instance()));}
     void userActionsAndState(){
         Urls urls;UserPage page(urls);page.setFixedSize(1000,700);
-        const auto example=readJson(CST_SOURCE_DIR "/config/cst-project.example.json");page.setProject(example);page.show();
-        auto *main=page.findChild<QPushButton *>("mainAction");QVERIFY(main);QCOMPARE(main->text(),"一键启动");QCOMPARE(main->property("stateColor").toString(),"#2563EB");
+        page.setProject({});page.show();
+        auto *main=page.findChild<QPushButton *>("mainAction");QVERIFY(main);QVERIFY(!main->isVisible());
+        auto *configure=page.findChild<QPushButton *>("configureAction");QVERIFY(configure);QVERIFY(configure->isVisible());
+        QSignalSpy configureSpy(&page,&UserPage::configureRequested);QTest::mouseClick(configure,Qt::LeftButton);QCOMPARE(configureSpy.count(),1);
+        const auto example=readJson(CST_SOURCE_DIR "/config/cst-project.example.json");page.setProject(example);QCoreApplication::processEvents();
+        QVERIFY(main->isVisible());QVERIFY(!configure->isVisible());QCOMPARE(main->text(),"一键启动");QCOMPARE(main->property("stateColor").toString(),"#2563EB");
         auto *frontend=page.findChild<QPushButton *>("open-frontend");auto *docs=page.findChild<QPushButton *>("open-docs");auto *feedback=page.findChild<QPushButton *>("feedback");
         QVERIFY(frontend&&docs&&feedback);QVERIFY(!frontend->isEnabled());QVERIFY(docs->isEnabled());QVERIFY(feedback->isEnabled());
         QTest::mouseClick(docs,Qt::LeftButton);QCOMPARE(urls.opened,"https://docs.example.com/customer-project");
@@ -81,6 +86,11 @@ private slots:
         auto *name=editor.findChild<SchemaEditor *>("name")->findChild<QLineEdit *>();QVERIFY(name);name->setText("修改任务名称");
         auto expected=task;expected["name"]="修改任务名称";QCOMPARE(editor.value().toObject(),expected);
         QVERIFY(!QPixmap(":/ui/down.png").isNull());QVERIFY(!QPixmap(":/ui/up.png").isNull());QVERIFY(!QPixmap(":/ui/check.png").isNull());
+    }
+    void logLineFormatting(){
+        const auto formatted=formatLogLine(R"({"ts":"2026-09-17T12:00:00.000Z","level":"error","channel":"stderr","event":"process.stderr","message":"boom"})");
+        QVERIFY(formatted.contains("boom"));QVERIFY(formatted.contains("ERROR"));QVERIFY(formatted.contains("[stderr]"));QVERIFY(!formatted.contains("\"message\""));
+        QCOMPARE(formatLogLine("plain text"),QString("plain text"));
     }
     void navigationCancellationAndClose(){
         QTemporaryDir directory;const auto schema=readJson(CST_SOURCE_DIR "/config/cst-project.schema.json");
@@ -124,9 +134,10 @@ private slots:
         }
         admin->setProject(example);adminNavigation->click();
         auto *projectName=admin->findChild<SchemaEditor *>("project.name")->findChild<QLineEdit *>();QVERIFY(projectName);projectName->setText("未保存的项目名称");
+        QVERIFY(!main->isEnabled());
         auto buttons=admin->findChildren<QPushButton *>();QPushButton *discard=nullptr;QPushButton *save=nullptr;
         for(auto *button:buttons){if(button->text()=="撤销修改")discard=button;if(button->text()=="保存配置")save=button;}
-        QVERIFY(discard&&save);QVERIFY(discard->isEnabled());QVERIFY(save->isEnabled());discard->click();QVERIFY(!save->isEnabled());
+        QVERIFY(discard&&save);QVERIFY(discard->isEnabled());QVERIFY(save->isEnabled());discard->click();QVERIFY(!save->isEnabled());QVERIFY(main->isEnabled());
         window.findChild<QPushButton *>("userNavigation")->click();
         runtime.start();QCOMPARE(main->text(),"一键停止");QCOMPARE(runtime.state(),ProjectState::Preflight);
         for(auto *editor:admin->findChildren<SchemaEditor *>())QVERIFY(!editor->isEnabled());

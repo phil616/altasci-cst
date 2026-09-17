@@ -13,6 +13,7 @@
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QJsonArray>
+#include <QKeySequence>
 #include <QMessageBox>
 #include <QSaveFile>
 #include <QScrollArea>
@@ -22,6 +23,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QUuid>
+#include <algorithm>
+#include <functional>
 
 namespace cst {
 namespace {
@@ -55,7 +58,7 @@ AdminPage::AdminPage(ProjectRuntimeService &runtime, ProjectConfigService &confi
     for(int i=0;i<navigation_->count();++i)navigation_->item(i)->setSizeHint(QSize(200,qMax(40,fontMetrics().height()+16)));
     outer->addWidget(navigation_);auto *right=new QVBoxLayout;outer->addLayout(right,1);breadcrumb_=new QLabel(this);breadcrumb_->setProperty("role","heading");right->setSpacing(12);right->addWidget(breadcrumb_);pageHelp_=helpText({},this);right->addWidget(pageHelp_);
     pages_=new QStackedWidget(this);right->addWidget(pages_,1);auto *footer=new QHBoxLayout;right->addLayout(footer);
-    saveStatus_=new QLabel("没有未保存修改",this);footer->addWidget(saveStatus_,1);save_=new QPushButton("保存配置",this);save_->setProperty("role","primary");discard_=new QPushButton("撤销修改",this);footer->addWidget(save_);footer->addWidget(discard_);
+    saveStatus_=new QLabel("没有未保存修改",this);footer->addWidget(saveStatus_,1);save_=new QPushButton("保存配置",this);save_->setProperty("role","primary");save_->setShortcut(QKeySequence::Save);save_->setToolTip("保存配置（Ctrl+S）");discard_=new QPushButton("撤销修改",this);discard_->setToolTip("放弃当前未保存修改");footer->addWidget(save_);footer->addWidget(discard_);
     connect(save_,&QPushButton::clicked,this,&AdminPage::save);connect(discard_,&QPushButton::clicked,this,[this]{runtime_.setEditing(false);setProject(runtime_.currentProject());});
     connect(navigation_,&QListWidget::currentRowChanged,this,[this](int row){pages_->setCurrentIndex(row);if(row>=0){breadcrumb_->setText(navigation_->item(row)->text());
         const QStringList descriptions{
@@ -70,8 +73,8 @@ AdminPage::AdminPage(ProjectRuntimeService &runtime, ProjectConfigService &confi
         pageHelp_->setText(descriptions.value(row));}});
     rebuild();navigation_->setCurrentRow(0);
 }
-void AdminPage::setProject(const QJsonObject &document){draft_=document;newProject_=false;modified_=false;rebuild();updateState();}
-void AdminPage::dirty(){modified_=true;runtime_.setEditing(true);saveStatus_->setText("有未保存修改");updateState();}
+void AdminPage::setProject(const QJsonObject &document){runtime_.setEditing(false);draft_=document;newProject_=false;modified_=false;emit editingChanged(false);rebuild();updateState();}
+void AdminPage::dirty(){modified_=true;runtime_.setEditing(true);emit editingChanged(true);saveStatus_->setText("有未保存修改");updateState();}
 void AdminPage::setField(const QString &field,const QJsonValue &value){auto project=draft_.value("project").toObject();project[field]=value;draft_["project"]=project;dirty();}
 SchemaEditor *AdminPage::fieldEditor(const QString &field,QWidget *parent){
     auto rule=schema_.value("$defs").toObject().value("project").toObject().value("properties").toObject().value(field).toObject();
@@ -82,9 +85,15 @@ SchemaEditor *AdminPage::fieldEditor(const QString &field,QWidget *parent){
 QWidget *AdminPage::page(int index){return qobject_cast<QScrollArea *>(pages_->widget(index))->widget();}
 void AdminPage::updateState(){
     const bool editable=runtime_.editable()&&!runtime_.busy();
-    for(auto *control:editControls_)control->setEnabled(editable&&(!draft_.isEmpty()||(control->property("requiresProject").isValid()&&!control->property("requiresProject").toBool())));
-    save_->setEnabled(editable&&modified_);discard_->setEnabled(editable&&modified_);
-    saveStatus_->setText(!editable?"项目运行或操作中：停止后可编辑配置":draft_.isEmpty()?"尚未选择项目：请到项目管理创建或导入":modified_?"有未保存修改 · 保存后生效":"配置已保存");
+    for(auto *control:editControls_){
+        const bool requiresProject=!control->property("requiresProject").isValid()||control->property("requiresProject").toBool();
+        control->setEnabled(editable&&(!requiresProject||!draft_.isEmpty()));
+    }
+    if(testAuthButton_)testAuthButton_->setEnabled(editable&&!draft_.isEmpty()&&!modified_);
+    if(syncButton_)syncButton_->setEnabled(editable&&!draft_.isEmpty()&&!modified_);
+    save_->setEnabled(editable&&!draft_.isEmpty()&&modified_);discard_->setEnabled(editable&&!draft_.isEmpty()&&modified_);
+    saveStatus_->setText(!editable?"项目运行或操作中：停止后可编辑配置":draft_.isEmpty()?"尚未选择项目：请创建或导入项目":modified_?"有未保存修改 · 保存后生效":"配置已保存");
+    refreshCredentialStatus();
 }
 SyncRequest AdminPage::request()const{
     const auto project=draft_.value("project").toObject(),source=project.value("source").toObject();
@@ -114,30 +123,56 @@ void AdminPage::buildTasks(QWidget *parent){
     if(!items->isEmpty())list->setCurrentRow(0);
 }
 void AdminPage::rebuild(){
-    const auto selected=qMax(0,navigation_->currentRow());editControls_.clear();logView_=nullptr;search_=nullptr;taskFilter_=nullptr;issues_=nullptr;
+    const auto selected=qMax(0,navigation_->currentRow());
+    editControls_.clear();logView_=nullptr;search_=nullptr;taskFilter_=nullptr;issues_=nullptr;credentialStatus_=nullptr;testAuthButton_=nullptr;syncButton_=nullptr;
     while(pages_->count()){auto *old=pages_->widget(0);pages_->removeWidget(old);delete old;}
     for(int i=0;i<8;++i){auto *scroll=new QScrollArea(pages_);scroll->setWidgetResizable(true);scroll->setFrameShape(QFrame::NoFrame);auto *card=new QWidget;card->setObjectName("contentCard");scroll->setWidget(card);pages_->addWidget(scroll);}
     const auto project=draft_.value("project").toObject();
+
     auto *overview=column(page(0));
-    section(overview,"项目资料","名称与说明会显示在用户运行页。启动前请完成任务、代码目录和端口配置。");
-    for(const auto &field:{"name","description"}){overview->addWidget(new QLabel(fieldLabel(field),page(0)));overview->addWidget(fieldEditor(field,page(0)));}
-    overview->addWidget(new QLabel("项目 ID："+project.value("id").toString(),page(0)));
-    section(overview,"启动与端口回收","一般情况下保留默认值即可。端口释放超时后，项目启动会报告失败。");overview->addWidget(fieldEditor("settings",page(0)));
-    editControls_.append(button("设为默认项目",overview,[this]{runtime_.setDefault(draft_.value("project").toObject().value("id").toString());}));overview->addStretch();
+    if(draft_.isEmpty()){
+        section(overview,"还没有可用项目","创建新项目或导入已有的 CST JSON 配置。创建后请按左侧顺序填写代码、任务、端口与用户入口。");
+        auto *emptyNotice=new QLabel("当前未选择项目。完成后回到“项目运行”即可启动。",page(0));emptyNotice->setProperty("role","notice");emptyNotice->setWordWrap(true);overview->addWidget(emptyNotice);
+        editControls_.append(button("创建项目",overview,[this]{createProject();}));
+        editControls_.append(button("导入 JSON",overview,[this]{importProject();}));
+        overview->addStretch();
+    }else{
+        section(overview,"项目资料","名称与说明会显示在用户运行页。启动前请完成任务、代码目录和端口配置。");
+        for(const auto &field:{"name","description"}){overview->addWidget(new QLabel(fieldLabel(field),page(0)));overview->addWidget(fieldEditor(field,page(0)));}
+        overview->addWidget(new QLabel("项目 ID："+project.value("id").toString(),page(0)));
+        section(overview,"启动与端口回收","一般情况下保留默认值即可。端口释放超时后，项目启动会报告失败。");overview->addWidget(fieldEditor("settings",page(0)));
+        editControls_.append(button("设为默认项目",overview,[this]{runtime_.setDefault(draft_.value("project").toObject().value("id").toString());}));
+        overview->addStretch();
+    }
     buildTasks(page(1));
+
     auto *portsLayout=column(page(2));section(portsLayout,"所需端口","添加协议、监听地址、端口号和所属任务。选中条目后可以编辑或调整顺序。");
     portsLayout->addWidget(fieldEditor("requiredPorts",page(2)));
     editControls_.append(button("立即检测",portsLayout,[this]{const auto ports=PortReclaimService::requirements(draft_.value("project").toObject().value("requiredPorts").toArray());
         runtime_.maintenance([this,ports](const Cancellation &cancel){QStringList report;for(const auto &port:ports){cancel.check();const auto owners=ports_.owners(port);if(owners.isEmpty())report.append(QString::number(port.port)+"：空闲");for(const auto &owner:owners)report.append(QString::number(port.port)+" PID="+QString::number(owner.pid)+" "+owner.imagePath);}const auto text=report.join('\n');QMetaObject::invokeMethod(this,[this,text]{QMessageBox::information(this,"端口检测",text.isEmpty()?"未配置端口":text);},Qt::QueuedConnection);});}));
     portsLayout->addStretch();
-    auto *actions=column(page(3));section(actions,"快捷入口","添加入口名称、URL 和可用条件。保存配置后，用户页会更新。");actions->addWidget(fieldEditor("userActions",page(3)));actions->addStretch();
+
+    auto *actions=column(page(3));section(actions,"快捷入口","添加入口名称、URL 和可用条件。保存配置后，用户页会更新。");
+    auto *actionsEditor=fieldEditor("userActions",page(3));actions->addWidget(actionsEditor);
+    section(actions,"预览","仅显示最终布局；实际按钮由用户页在保存后生成。");
+    auto *preview=new QWidget(page(3));auto *previewGrid=new QGridLayout(preview);previewGrid->setContentsMargins(0,0,0,0);previewGrid->setSpacing(8);previewGrid->setColumnStretch(0,1);previewGrid->setColumnStretch(1,1);actions->addWidget(preview);
+    const auto refreshPreview=[this,preview,previewGrid]{
+        while(auto *item=previewGrid->takeAt(0)){delete item->widget();delete item;}
+        QList<QJsonObject> entries;for(const auto &value:draft_.value("project").toObject().value("userActions").toArray())entries.append(value.toObject());
+        std::sort(entries.begin(),entries.end(),[](const QJsonObject &a,const QJsonObject &b){return a.value("order").toInt()<b.value("order").toInt();});
+        if(entries.isEmpty()){auto *empty=helpText("尚未配置快捷入口。",preview);previewGrid->addWidget(empty,0,0,1,2);return;}
+        int index=0;for(const auto &entry:entries){auto *label=new QLabel(entry.value("label").toString()+(entry.value("availableWhen").toString()=="running"?QString(" · 运行后可用"):QString()),preview);label->setProperty("role","previewButton");label->setAlignment(Qt::AlignCenter);label->setWordWrap(true);label->setToolTip(entry.value("url").toString());previewGrid->addWidget(label,index/2,index%2);++index;}
+    };
+    connect(actionsEditor,&SchemaEditor::changed,preview,[refreshPreview]{refreshPreview();});refreshPreview();
+    actions->addStretch();
+
     auto *sourceLayout=column(page(4));auto *warning=new QLabel("同步会以远程分支替换整个本地项目目录，本地修改和生成文件不会保留。",page(4));warning->setProperty("role","notice");warning->setWordWrap(true);sourceLayout->addWidget(warning);
     sourceLayout->addWidget(fieldEditor("source",page(4)));
-    auto *credentialStatus=new QLabel(page(4));
-    try{credentialStatus->setText(credentials_.read(request().credentialTarget)?"凭据：已保存":"凭据：未保存");}catch(const std::exception &e){credentialStatus->setText(QString::fromUtf8(e.what()));}sourceLayout->addWidget(credentialStatus);
-    editControls_.append(button("测试认证",sourceLayout,[this]{if(modified_){emit error("请先保存配置");return;}const auto value=request();runtime_.maintenance([this,value](const Cancellation &cancel){sync_.testAuthentication(value,cancel);});}));
-    editControls_.append(button("同步代码",sourceLayout,[this]{if(modified_){emit error("请先保存配置，再同步代码。");return;}if(QMessageBox::warning(this,"确认同步代码","同步将替换整个本地项目目录，本地修改和生成文件不会保留。确定继续？",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)==QMessageBox::Yes)runtime_.synchronize();}));
+    credentialStatus_=new QLabel(page(4));credentialStatus_->setObjectName("credentialStatus");credentialStatus_->setWordWrap(true);sourceLayout->addWidget(credentialStatus_);
+    testAuthButton_=button("测试认证",sourceLayout,[this]{if(modified_){emit error("请先保存配置");return;}const auto value=request();runtime_.maintenance([this,value](const Cancellation &cancel){sync_.testAuthentication(value,cancel);});});editControls_.append(testAuthButton_);
+    syncButton_=button("同步代码",sourceLayout,[this]{if(modified_){emit error("请先保存配置，再同步代码。");return;}runtime_.synchronize();});editControls_.append(syncButton_);
     auto *head=new QLabel("最近 HEAD：尚未同步",page(4));sourceLayout->addWidget(head);sourceLayout->addStretch();connect(&runtime_,&ProjectRuntimeService::headChanged,head,[head](const QString &value){head->setText("最近 HEAD："+value);});
+
     auto *environment=column(page(5));section(environment,"工具与环境","按顺序查找可执行文件。环境文件可包含 KEY=VALUE，并在任务的环境页中引用。");environment->addWidget(fieldEditor("toolDirectories",page(5)));
     editControls_.append(button("编辑环境文件",environment,[this]{editEnv();}));
     section(environment,"Git 仓库认证","填写仓库账号及访问令牌，然后保存凭据；再到代码同步页测试认证。");
@@ -145,31 +180,54 @@ void AdminPage::rebuild(){
     auto *credentialForm=new QFormLayout;credentialForm->setRowWrapPolicy(QFormLayout::WrapAllRows);credentialForm->setVerticalSpacing(8);credentialForm->addRow("用户名",username);credentialForm->addRow("PAT",password);environment->addLayout(credentialForm);editControls_.append(username);editControls_.append(password);
     editControls_.append(button("保存凭据",environment,[this,username,password]{if(username->text().trimmed().isEmpty()||password->text().isEmpty()){emit error("请填写 Git 用户名和访问令牌，再保存凭据。");return;}const auto target=request().credentialTarget;const Credential value{username->text(),password->text()};logsService_.addSecret(value.password);password->clear();runtime_.maintenance([this,target,value](const Cancellation &cancel){cancel.check();credentials_.write(target,value);});}));
     editControls_.append(button("删除凭据",environment,[this]{const auto target=request().credentialTarget;runtime_.maintenance([this,target](const Cancellation &cancel){cancel.check();credentials_.remove(target);});}));environment->addStretch();
+
     auto *logging=column(page(6));auto *filter=new QHBoxLayout;logging->addLayout(filter);taskFilter_=new QComboBox(page(6));taskFilter_->addItem("全部任务","");for(const auto &value:project.value("tasks").toArray()){const auto task=value.toObject();taskFilter_->addItem(task.value("name").toString(),task.value("id").toString());}filter->addWidget(taskFilter_);
-    search_=new QLineEdit(page(6));search_->setClearButtonEnabled(true);search_->setPlaceholderText("搜索日志");search_->setAccessibleName("搜索日志");filter->addWidget(search_,1);
-    logView_=new QPlainTextEdit(page(6));logView_->setProperty("role","code");logView_->setPlaceholderText("暂无日志。启动项目或执行维护操作后，日志会显示在这里。");logView_->setMinimumHeight(200);logView_->setReadOnly(true);logView_->setMaximumBlockCount(5000);logging->addWidget(logView_,1);
+    search_=new QLineEdit(page(6));search_->setClearButtonEnabled(true);search_->setPlaceholderText("搜索日志（支持任务、事件、输出内容）");search_->setAccessibleName("搜索日志");filter->addWidget(search_,1);
+    logView_=new QPlainTextEdit(page(6));logView_->setObjectName("logView");logView_->setProperty("role","code");logView_->setPlaceholderText("暂无日志。启动项目或执行维护操作后，日志会显示在这里。");logView_->setMinimumHeight(200);logView_->setReadOnly(true);logView_->setMaximumBlockCount(5000);logging->addWidget(logView_,1);
     connect(search_,&QLineEdit::textChanged,this,&AdminPage::renderLogs);connect(taskFilter_,&QComboBox::currentIndexChanged,this,&AdminPage::renderLogs);
     button("复制日志",logging,[this]{QApplication::clipboard()->setText(logView_->textCursor().hasSelection()?logView_->textCursor().selectedText():logView_->toPlainText());});
     button("打开日志目录",logging,[this]{const auto id=draft_.value("project").toObject().value("id").toString();if(!QDesktopServices::openUrl(QUrl::fromLocalFile(paths_.logDirectory(id))))emit error("无法打开日志目录");});
     editControls_.append(button("导出诊断包",logging,[this]{const auto path=QFileDialog::getSaveFileName(this,"导出诊断包",{},"ZIP (*.zip)");if(path.isEmpty())return;const auto config=runtime_.currentProject();const auto tasks=runtime_.taskSnapshot();const auto operation=runtime_.operationId();runtime_.maintenance([this,config,tasks,path,operation](const Cancellation &cancel){diagnostics_.exportZip(config,tasks,path,operation,cancel);});}));renderLogs();
-    auto *configLayout=column(page(7));    section(configLayout,"创建与备份","首次使用可导入已有 JSON，或创建项目后逐页填写配置。");
-    editControls_.append(button("创建项目",configLayout,[this]{if(modified_){emit error("请先保存或放弃编辑");return;}bool ok=false;const auto name=QInputDialog::getText(this,"创建项目","项目名称",QLineEdit::Normal,{},&ok);if(!ok||name.isEmpty())return;draft_=configuration_.create(name,"C:\\CSTProjects\\"+QUuid::createUuid().toString(QUuid::WithoutBraces),"C:\\Program Files\\Git\\cmd\\git.exe");newProject_=true;dirty();rebuild();navigation_->setCurrentRow(0);}));
-    editControls_.append(button("导入 JSON",configLayout,[this]{if(modified_){emit error("请先保存或放弃编辑");return;}const auto path=QFileDialog::getOpenFileName(this,"导入项目",{},"JSON (*.json)");if(path.isEmpty())return;try{runtime_.importProject(configuration_.load(path));}catch(const std::exception &e){showConfigurationProblem(QString::fromUtf8(e.what()));}}));
+
+    auto *configLayout=column(page(7));section(configLayout,"创建与备份","首次使用可导入已有 JSON，或创建项目后逐页填写配置。");
+    editControls_.append(button("创建项目",configLayout,[this]{createProject();}));
+    editControls_.append(button("导入 JSON",configLayout,[this]{importProject();}));
     editControls_.append(button("导出 JSON",configLayout,[this]{const auto path=QFileDialog::getSaveFileName(this,"导出项目",{},"JSON (*.json)");if(!path.isEmpty())runtime_.exportProject(path);}));
     section(configLayout,"项目切换","切换前请保存或撤销修改。删除配置不会删除项目源代码。");
     auto *projects=new QComboBox(page(7));projects->setAccessibleName("切换项目");
+    issues_=new QLabel("配置验证结果将在保存或校验后显示。",page(7));issues_->setObjectName("validationIssues");issues_->setWordWrap(true);issues_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     try{for(const auto &entry:catalog_.entries())projects->addItem(entry.name,entry.id);}catch(const std::exception &e){issues_->setText(QString::fromUtf8(e.what()));}
     projects->setCurrentIndex(projects->findData(project.value("id").toString()));configLayout->addWidget(projects);editControls_.append(projects);
     editControls_.append(button("切换到所选项目",configLayout,[this,projects]{if(projects->currentIndex()>=0)runtime_.switchProject(projects->currentData().toString());}));
     editControls_.append(button("所选项目设为默认",configLayout,[this,projects]{if(projects->currentIndex()>=0)runtime_.setDefault(projects->currentData().toString());}));
     editControls_.append(button("删除所选项目配置",configLayout,[this,projects]{if(modified_){emit error("请先保存或放弃编辑");return;}if(projects->currentIndex()>=0&&QMessageBox::question(this,"删除项目配置","确定删除所选项目的配置？此操作无法撤销，源代码目录会保留。",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)==QMessageBox::Yes)runtime_.removeProject(projects->currentData().toString());}));
-    section(configLayout,"配置检查","保存前会自动校验；也可手动查看当前草稿的问题。");issues_=new QLabel("配置验证结果将在保存或校验后显示。",page(7));issues_->setWordWrap(true);issues_->setTextInteractionFlags(Qt::TextSelectableByMouse);configLayout->addWidget(issues_);
-    button("校验当前配置",configLayout,[this]{const auto issues=configuration_.validate(draft_);issues_->setText(issues.isEmpty()?"配置有效":issuesText(issues));});
-configLayout->addStretch();
+    section(configLayout,"配置检查","保存前会自动校验；也可手动查看当前草稿的问题。");configLayout->addWidget(issues_);
+    editControls_.append(button("校验当前配置",configLayout,[this]{const auto issues=configuration_.validate(draft_);issues_->setText(issues.isEmpty()?"配置有效":issuesText(issues));}));
+    configLayout->addStretch();
     pages_->setCurrentIndex(selected);updateState();
 }
-void AdminPage::showConfigurationProblem(const QString &message){navigation_->setCurrentRow(7);issues_->setText(message);}
-void AdminPage::appendLog(const QString &task,const QString &line){logLines_.append({task,line});if(logLines_.size()>5000)logLines_.removeFirst();if(logView_&&(taskFilter_->currentData().toString().isEmpty()||taskFilter_->currentData().toString()==task)&&line.contains(search_->text(),Qt::CaseInsensitive))logView_->appendPlainText(line);}
+void AdminPage::showPage(int index){if(index>=0&&index<navigation_->count())navigation_->setCurrentRow(index);}
+void AdminPage::createProject(){
+    if(modified_){emit error("请先保存或放弃当前修改");return;}
+    bool ok=false;const auto name=QInputDialog::getText(this,"创建项目","项目名称",QLineEdit::Normal,{},&ok).trimmed();if(!ok||name.isEmpty())return;
+    draft_=configuration_.create(name,"C:\\CSTProjects\\"+QUuid::createUuid().toString(QUuid::WithoutBraces),"C:\\Program Files\\Git\\cmd\\git.exe");
+    newProject_=true;dirty();rebuild();navigation_->setCurrentRow(0);
+}
+void AdminPage::importProject(){
+    if(modified_){emit error("请先保存或放弃当前修改");return;}
+    const auto path=QFileDialog::getOpenFileName(this,"导入项目",{},"JSON (*.json)");if(path.isEmpty())return;
+    try{runtime_.importProject(configuration_.load(path));}catch(const std::exception &e){showConfigurationProblem(QString::fromUtf8(e.what()));}
+}
+void AdminPage::refreshCredentialStatus(){
+    if(!credentialStatus_)return;
+    if(draft_.isEmpty()){credentialStatus_->setText("凭据：选择项目后可用");return;}
+    const auto target=request().credentialTarget;
+    if(target.isEmpty()){credentialStatus_->setText("凭据：保存项目后自动生成名称");return;}
+    try{credentialStatus_->setText(credentials_.read(target)?"凭据：已保存":"凭据：未保存");}
+    catch(const std::exception &e){credentialStatus_->setText(QString::fromUtf8(e.what()));}
+}
+void AdminPage::showConfigurationProblem(const QString &message){navigation_->setCurrentRow(7);if(issues_)issues_->setText(message);}
+void AdminPage::appendLog(const QString &task,const QString &line){const auto display=formatLogLine(line);logLines_.append({task,display});if(logLines_.size()>5000)logLines_.removeFirst();if(logView_&&(taskFilter_->currentData().toString().isEmpty()||taskFilter_->currentData().toString()==task)&&display.contains(search_->text(),Qt::CaseInsensitive))logView_->appendPlainText(display);}
 void AdminPage::renderLogs(){if(!logView_)return;QStringList lines;const auto task=taskFilter_->currentData().toString();for(const auto &line:logLines_)if((task.isEmpty()||line.first==task)&&line.second.contains(search_->text(),Qt::CaseInsensitive))lines.append(line.second);logView_->setPlainText(lines.join('\n'));}
 void AdminPage::editEnv(){
     const auto project=draft_.value("project").toObject();const auto id=project.value("id").toString();const auto directory=paths_.dataDirectory(id)+"\\env";

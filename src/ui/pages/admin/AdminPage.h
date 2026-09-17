@@ -21,8 +21,10 @@ public:
     void updateState();
     void appendLog(const QString &task, const QString &line);
     void showConfigurationProblem(const QString &message);
+    void showPage(int index);
 signals:
     void error(QString message);
+    void editingChanged(bool dirty);
 private:
     void rebuild();
     void dirty();
@@ -34,6 +36,9 @@ private:
     SyncRequest request() const;
     void save();
     void editEnv();
+    void createProject();
+    void importProject();
+    void refreshCredentialStatus();
     ProjectRuntimeService &runtime_;
     ProjectConfigService &configuration_;
     ProjectCatalogService &catalog_;
@@ -60,5 +65,8 @@ private:
     QList<QPair<QString,QString>> logLines_;
     QList<QWidget *> editControls_;
     QLabel *issues_ = nullptr;
+    QLabel *credentialStatus_ = nullptr;
+    QPushButton *testAuthButton_ = nullptr;
+    QPushButton *syncButton_ = nullptr;
 };
 }

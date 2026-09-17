@@ -46,6 +46,7 @@ ProjectRuntimeService::~ProjectRuntimeService() {
 ProjectState ProjectRuntimeService::state() const { return state_; }
 QJsonObject ProjectRuntimeService::currentProject() const { return current_; }
 bool ProjectRuntimeService::editable() const { return (state_ == ProjectState::Stopped || state_ == ProjectState::Failed) && jobsEmpty_ && !closing_; }
+bool ProjectRuntimeService::editing() const { return editing_; }
 bool ProjectRuntimeService::busy() const { return queue_.busy(); }
 QString ProjectRuntimeService::operationId() const { return operationId_; }
 QJsonArray ProjectRuntimeService::taskSnapshot() const {

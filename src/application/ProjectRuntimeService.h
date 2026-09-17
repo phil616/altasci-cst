@@ -17,6 +17,7 @@ public:
     ProjectState state() const;
     QJsonObject currentProject() const;
     bool editable() const;
+    bool editing() const;
     bool busy() const;
     QString operationId() const;
     QJsonArray taskSnapshot() const;

@@ -9,7 +9,9 @@ namespace cst {
 inline void applyTheme(QApplication &app) {
     initializeUiResources();
     app.setStyle("Fusion");
-    auto font = app.font(); font.setPointSize(10); app.setFont(font);
+    auto font = app.font();
+    font.setFamilies({"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "Noto Sans CJK SC", "sans-serif"});
+    font.setPointSize(10); app.setFont(font);
     QPalette palette;
     palette.setColor(QPalette::Window, QColor("#EEF2F6"));
     palette.setColor(QPalette::WindowText, QColor("#172B4D"));
@@ -32,6 +34,14 @@ inline void applyTheme(QApplication &app) {
         QWidget#contentCard, QFrame[role="card"] { background: white; border: 1px solid #CBD5E1; border-radius: 8px; }
         QFrame#appHeader { background: #172B4D; border: none; }
         QFrame#appHeader QLabel { color: white; }
+        QFrame#appHeader QPushButton { background: transparent; color: #CBD5E1; border: 1px solid transparent; border-radius: 6px; padding: 8px 16px; min-height: 0; }
+        QFrame#appHeader QPushButton:hover { background: rgba(255,255,255,0.12); color: white; border-color: transparent; }
+        QFrame#appHeader QPushButton:checked { background: #2563EB; color: white; border-color: #2563EB; font-weight: 600; }
+        QFrame#appHeader QPushButton:focus { border-color: #93C5FD; }
+        QLabel#projectState { color: white; border-radius: 10px; padding: 4px 10px; background: #64748B; }
+        QLabel#operationStatus { color: #475569; padding: 0 8px; }
+        QLabel#credentialStatus, QLabel#validationIssues { color: #475569; }
+        QLabel[role="previewButton"] { background: white; color: #334155; border: 1px solid #94A3B8; border-radius: 6px; padding: 8px 12px; min-height: 24px; }
         QLabel[role="section"] { color: #172B4D; font-weight: 600; font-size: 15px; padding-top: 8px; }
         QLabel[role="help"] { color: #475569; }
         QLabel[role="status"] { background: #E2E8F0; color: #334155; border-radius: 6px; padding: 8px 12px; }
