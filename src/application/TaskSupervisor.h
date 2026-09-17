@@ -16,6 +16,7 @@ class TaskSupervisor {
 public:
     TaskSupervisor(IProcessRunner &runner, ReadinessService &readiness, PortReclaimService &ports,
                    IClock &clock, ProjectPaths paths);
+    void preflight(const QJsonObject &project, const Cancellation &cancel);
     void start(const QJsonObject &project, const QString &operationId, const Cancellation &cancel);
     void tick(const Cancellation &cancel);
     void stop();

@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QTemporaryDir>
 #include <QTest>
+#include "../TestCompatibility.h"
 
 using namespace cst;
 class ConfigTests final : public QObject {
@@ -21,19 +22,19 @@ private slots:
         QCOMPARE(catalog.defaultId(), id);
         QCOMPARE(catalog.selectedId(), id);
         QCOMPARE(catalog.project(id), example);
-        QVERIFY_EXCEPTION_THROWN(catalog.importProject(example), std::runtime_error);
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, catalog.importProject(example));
         catalog.exportProject(id, directory.filePath("export.json"));
         QCOMPARE(config.load(directory.filePath("export.json")), example);
         auto changed = example; auto project = changed["project"].toObject(); project["name"] = "新名称"; changed["project"] = project;
         catalog.saveProject(id, changed);
         QCOMPARE(catalog.entries()[0].name, "新名称");
         auto invalid = changed; invalid["unknown"] = "bad";
-        QVERIFY_EXCEPTION_THROWN(catalog.saveProject(id, invalid), ConfigurationError);
+        QVERIFY_THROWS_EXCEPTION(ConfigurationError, catalog.saveProject(id, invalid));
         QCOMPARE(catalog.project(id), changed);
         catalog.removeProject(id);
         QVERIFY(catalog.entries().isEmpty());
         QVERIFY(catalog.defaultId().isEmpty());
-        QVERIFY_EXCEPTION_THROWN(catalog.project(id), std::runtime_error);
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, catalog.project(id));
         QVERIFY(QFile::exists(directory.filePath("export.json")));
     }
     void invalidCatalog() {
@@ -41,8 +42,8 @@ private slots:
         ProjectConfigService config(ConfigurationValidator(readJson(CST_SOURCE_DIR "/config/cst-project.schema.json"), {}));
         ProjectCatalogService catalog(directory.path(), config);
         saveJson(directory.filePath("catalog.json"), {{"projects", QJsonArray{}}, {"defaultProjectId", "missing"}, {"lastSelectedId", ""}});
-        QVERIFY_EXCEPTION_THROWN(catalog.entries(), std::runtime_error);
-        QVERIFY_EXCEPTION_THROWN(catalog.project("../../file"), std::runtime_error);
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, catalog.entries());
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, catalog.project("../../file"));
     }
     void draftRequiresRealInputs() {
         ProjectConfigService config(ConfigurationValidator(readJson(CST_SOURCE_DIR "/config/cst-project.schema.json"), {}));

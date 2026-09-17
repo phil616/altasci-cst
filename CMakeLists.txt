@@ -72,7 +72,7 @@ add_executable(cst-signal-helper helpers/signal-helper/main.cpp)
 set_target_properties(cst-signal-helper PROPERTIES AUTOMOC OFF)
 cst_owned(cst-signal-helper)
 
-foreach(test Domain Config Service)
+foreach(test Domain Config Service Log)
   string(TOLOWER "${test}" lower)
   add_executable(cst-unit-${lower} tests/unit/${test}Tests.cpp)
   target_link_libraries(cst-unit-${lower} PRIVATE cst_application Qt6::Test)

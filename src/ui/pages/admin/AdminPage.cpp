@@ -75,18 +75,18 @@ void AdminPage::buildTasks(QWidget *parent){
     auto *layout=column(parent);auto *splitter=new QSplitter(parent);layout->addWidget(splitter,1);
     auto *left=new QWidget(splitter);auto *leftLayout=column(left);auto *list=new QListWidget(left);leftLayout->addWidget(list);
     auto *detail=new QWidget(splitter);auto *details=column(detail);splitter->setStretchFactor(1,1);
-    auto data=std::make_shared<QJsonArray>(draft_.value("project").toObject().value("tasks").toArray());
+    auto items=std::make_shared<QJsonArray>(draft_.value("project").toObject().value("tasks").toArray());
     auto active=std::make_shared<SchemaEditor *>(nullptr);const auto taskRule=QJsonObject{{"$ref","#/$defs/task"}};
-    const auto refresh=[list,data]{QSignalBlocker blocker(list);list->clear();for(const auto &value:*data)list->addItem(value.toObject().value("name").toString());};refresh();
-    connect(list,&QListWidget::currentRowChanged,this,[this,detail,details,data,active,taskRule,list](int row){
+    const auto refresh=[list,items]{QSignalBlocker blocker(list);list->clear();for(const auto &value:*items)list->addItem(value.toObject().value("name").toString());};refresh();
+    connect(list,&QListWidget::currentRowChanged,this,[this,detail,details,items,active,taskRule,list](int row){
         if(*active){editControls_.removeAll(*active);details->removeWidget(*active);(*active)->deleteLater();*active=nullptr;}
-        if(row<0||row>=data->size())return;
-        *active=new SchemaEditor(schema_,taskRule,(*data)[row],detail);details->addWidget(*active);editControls_.append(*active);(*active)->setEnabled(runtime_.editable());
-        connect(*active,&SchemaEditor::changed,this,[this,data,active,list,row]{(*data)[row]=(*active)->value();list->item(row)->setText((*data)[row].toObject().value("name").toString());setField("tasks",*data);});
+        if(row<0||row>=items->size())return;
+        *active=new SchemaEditor(schema_,taskRule,(*items)[row],detail);details->addWidget(*active);editControls_.append(*active);(*active)->setEnabled(runtime_.editable());
+        connect(*active,&SchemaEditor::changed,this,[this,items,active,list,row]{(*items)[row]=(*active)->value();list->item(row)->setText((*items)[row].toObject().value("name").toString());setField("tasks",*items);});
     });
-    editControls_.append(button("添加任务",leftLayout,[this,data,list,refresh,taskRule]{auto value=SchemaEditor::initialValue(schema_,taskRule).toObject();value["name"]="新任务";value["order"]=int(data->size()+1)*10;auto service=value.value("serviceCommand").toObject();service["timeoutMs"]=0;value["serviceCommand"]=service;data->append(value);refresh();list->setCurrentRow(int(data->size())-1);setField("tasks",*data);}));
-    editControls_.append(button("删除任务",leftLayout,[this,data,list,refresh]{const auto row=list->currentRow();if(row<0)return;data->removeAt(row);list->setCurrentRow(-1);refresh();list->setCurrentRow(data->isEmpty()?-1:qMin(row,int(data->size())-1));setField("tasks",*data);}));
-    if(!data->isEmpty())list->setCurrentRow(0);
+    editControls_.append(button("添加任务",leftLayout,[this,items,list,refresh,taskRule]{auto value=SchemaEditor::initialValue(schema_,taskRule).toObject();value["name"]="新任务";value["order"]=int(items->size()+1)*10;auto service=value.value("serviceCommand").toObject();service["timeoutMs"]=0;value["serviceCommand"]=service;items->append(value);refresh();list->setCurrentRow(int(items->size())-1);setField("tasks",*items);}));
+    editControls_.append(button("删除任务",leftLayout,[this,items,list,refresh]{const auto row=list->currentRow();if(row<0)return;items->removeAt(row);list->setCurrentRow(-1);refresh();list->setCurrentRow(items->isEmpty()?-1:qMin(row,int(items->size())-1));setField("tasks",*items);}));
+    if(!items->isEmpty())list->setCurrentRow(0);
 }
 void AdminPage::rebuild(){
     const auto selected=qMax(0,navigation_->currentRow());editControls_.clear();logView_=nullptr;search_=nullptr;taskFilter_=nullptr;issues_=nullptr;

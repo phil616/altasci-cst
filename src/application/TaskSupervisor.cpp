@@ -1,5 +1,7 @@
 #include "TaskSupervisor.h"
 #include <QFile>
+#include <QFileInfo>
+#include <QDir>
 #include <QJsonArray>
 #include <algorithm>
 
@@ -59,6 +61,22 @@ void TaskSupervisor::notify(Task &task, const QString &state) {
     task.state = state;
     if (taskChanged) taskChanged({task.configuration.value("id").toString(), task.configuration.value("name").toString(), state, task.budget.attempts()});
 }
+void TaskSupervisor::preflight(const QJsonObject &project, const Cancellation &cancel) {
+    if (!empty()) taskError("有残留托管进程，不能启动");
+    project_ = project;
+    const auto id = project.value("id").toString();
+    if (!QDir().mkpath(paths_.dataDirectory(id)) || !QDir().mkpath(paths_.logDirectory(id))) taskError("无法创建项目数据或日志目录");
+    const auto directory = project.value("source").toObject().value("workingDirectory").toString();
+    const auto canonical = QFileInfo(directory).canonicalFilePath();
+    for (const auto &reserved : {paths_.installDirectory, paths_.storageDirectory, paths_.windowsDirectory})
+        if (isWithinWindowsPath(canonical, reserved)) taskError("源码目录的实际路径位于受保护目录内");
+    for (const auto &value : project.value("tasks").toArray()) {
+        cancel.check(); const auto task = value.toObject();
+        if (!QFileInfo(expand(task).value("workingDirectory").toString()).isDir()) taskError("任务工作目录不存在：" + task.value("name").toString());
+        for (const auto &spec : task.value("prepareCommands").toArray()) { cancel.check(); command(task, spec.toObject()); }
+        command(task, task.value("serviceCommand").toObject());
+    }
+}
 void TaskSupervisor::prepare(Task &task, const QJsonObject &spec, const Cancellation &cancel) {
     notify(task, "Preparing");
     const auto processSpec = command(task.configuration, spec);
@@ -103,6 +121,12 @@ void TaskSupervisor::start(const QJsonObject &project, const QString &operationI
     for (auto &task : tasks_) {
         for (const auto &prepareSpec : task.configuration.value("prepareCommands").toArray()) { cancel.check(); prepare(task, prepareSpec.toObject(), cancel); }
         launch(task, cancel);
+    }
+    for (;;) {
+        tick(cancel);
+        const bool allRunning = std::all_of(tasks_.begin(), tasks_.end(), [](const Task &task) { return task.state == "Running"; });
+        if (allRunning) break;
+        clock_.sleep(25, cancel);
     }
 }
 void TaskSupervisor::tick(const Cancellation &cancel) {

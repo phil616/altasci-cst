@@ -9,6 +9,7 @@
 #include <QTcpServer>
 #include <QTemporaryDir>
 #include <QTest>
+#include "../TestCompatibility.h"
 #include <QUuid>
 
 using namespace cst;
@@ -125,7 +126,7 @@ private slots:
         TestRunner runner; runner.failCommand = "second-prepare";
         TestPorts ports; TestClock clock; Cancellation cancel; ReadinessService readiness(clock); PortReclaimService reclaim(ports, clock);
         TaskSupervisor supervisor(runner, readiness, reclaim, clock, {});
-        QVERIFY_EXCEPTION_THROWN(supervisor.start(project(endpoint.serverPort()), "operation", cancel), std::runtime_error);
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, supervisor.start(project(endpoint.serverPort()), "operation", cancel));
         QVERIFY(!runner.events.contains("start:second-serve"));
         supervisor.stop(); QVERIFY(supervisor.empty()); QCOMPARE(runner.events.last(), "stop:first-serve");
     }
@@ -153,10 +154,10 @@ private slots:
         writeMarker(target, "local");
         SourceSyncService sync(runner, files, clock, directory.filePath("storage"), "askpass", mutex);
         const SyncRequest request{id, "https://example.test/repo", "main", target, "git", "credential", "operation"};
-        if (failure) { QVERIFY_EXCEPTION_THROWN(sync.synchronize(request, cancel, [] { return true; }), std::runtime_error); QVERIFY(QFile::exists(target + "/local")); }
+        if (failure) { QVERIFY_THROWS_EXCEPTION(std::runtime_error, sync.synchronize(request, cancel, [] { return true; })); QVERIFY(QFile::exists(target + "/local")); }
         else { QCOMPARE(sync.synchronize(request, cancel, [] { return true; }), runner.head); QVERIFY(QFile::exists(target + "/remote")); QVERIFY(!QFile::exists(target + "/local")); }
         QVERIFY(!QFile::exists(directory.filePath("storage/state/" + id + "/sync-journal.json")));
-        QVERIFY_EXCEPTION_THROWN(sync.synchronize(request, cancel, [] { return false; }), std::runtime_error);
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, sync.synchronize(request, cancel, [] { return false; }));
     }
     void journalRecovery_data() {
         QTest::addColumn<int>("stage");
@@ -176,7 +177,7 @@ private slots:
         saveJson(journal, {{"target", target}, {"staging", staging}, {"backup", backup}, {"phase", "crash"}});
         SourceSyncService sync(runner, files, clock, directory.filePath("storage"), "askpass", mutex);
         const SyncRequest request{id, "https://example.test/repo", "main", target, "git", "credential", "operation"};
-        if (stage == 4) { QVERIFY_EXCEPTION_THROWN(sync.recover(request, cancel), std::runtime_error); QVERIFY(QFile::exists(journal)); }
+        if (stage == 4) { QVERIFY_THROWS_EXCEPTION(std::runtime_error, sync.recover(request, cancel)); QVERIFY(QFile::exists(journal)); }
         else {
             sync.recover(request, cancel);
             QVERIFY(QFile::exists(target + (stage == 1 ? "/backup" : stage == 3 ? "/staging" : "/target")));

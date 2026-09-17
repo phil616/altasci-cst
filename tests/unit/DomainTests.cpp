@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTest>
+#include "../TestCompatibility.h"
 
 using namespace cst;
 class DomainTests final : public QObject {
@@ -92,15 +93,15 @@ private slots:
         QVERIFY(!isAllowedUrl("https://example.com/repo#main", true));
         QVERIFY(!isAllowedUrl("https:relative"));
         QCOMPARE(expandPlaceholders("{{PROJECT_DIR}}/a", {{"PROJECT_DIR", "C:/project"}}), "C:/project/a");
-        QVERIFY_EXCEPTION_THROWN(expandPlaceholders("{{UNKNOWN}}", {}), std::invalid_argument);
-        QVERIFY_EXCEPTION_THROWN(expandPlaceholders("{{PROJECT_DIR}}", {{"PROJECT_DIR", "{{DATA_DIR}}"}}), std::invalid_argument);
+        QVERIFY_THROWS_EXCEPTION(std::invalid_argument, expandPlaceholders("{{UNKNOWN}}", {}));
+        QVERIFY_THROWS_EXCEPTION(std::invalid_argument, expandPlaceholders("{{PROJECT_DIR}}", {{"PROJECT_DIR", "{{DATA_DIR}}"}}));
         QVERIFY(addressesConflict("::", "127.0.0.1")); QVERIFY(addressesConflict("0.0.0.0", "127.0.0.1"));
         QVERIFY(!addressesConflict("127.0.0.2", "127.0.0.1"));
     }
     void environment() {
         const auto parsed = parseEnv("\xef\xbb\xbf# comment\r\nPath='a b'\r\nA=\"${NO_EXPANSION}\\n\"\nEMPTY=\n");
         QCOMPARE(parsed.value("PATH"), "a b"); QCOMPARE(parsed.value("A"), "${NO_EXPANSION}\\n"); QCOMPARE(parsed.value("EMPTY"), "");
-        for (const auto &bad : {QByteArray("export A=x"), QByteArray("A"), QByteArray("A='x"), QByteArray("A=\xff")}) QVERIFY_EXCEPTION_THROWN(parseEnv(bad), std::invalid_argument);
+        for (const auto &bad : {QByteArray("export A=x"), QByteArray("A"), QByteArray("A='x"), QByteArray("A=\xff")}) QVERIFY_THROWS_EXCEPTION(std::invalid_argument, parseEnv(bad));
         const auto merged = mergeEnvironment(true, {{"Path", "system"}}, {{{"PATH", "first"}}, {{"path", "second"}}}, {{"PaTh", "configured"}}, {{"CST_PROJECT_ID", "injected"}});
         QCOMPARE(merged.value("PATH"), "configured"); QCOMPARE(merged.size(), 2);
         QCOMPARE(mergeEnvironment(false, {{"X", "system"}}, {}, {}, {}).size(), 0);

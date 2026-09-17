@@ -55,6 +55,7 @@ QJsonArray ProjectRuntimeService::taskSnapshot() const {
 }
 void ProjectRuntimeService::initialize(const QString &storageDirectory) {
     if (queue_.busy()) return;
+    storageDirectory_ = storageDirectory;
     auto document = std::make_shared<QJsonObject>(); newOperation();
     queue_.enqueue({}, [this, storageDirectory, document] {
         Cancellation cancel;
@@ -97,8 +98,13 @@ void ProjectRuntimeService::start() {
         try {
             const auto issues = configuration_.validate(document); if (!issues.isEmpty()) throw ConfigurationError(issues);
             cancel->check();
+            if (storageDirectory_.isEmpty() || !QDir().mkpath(storageDirectory_ + "/locks")) throw std::runtime_error("项目数据目录未初始化");
+            projectLock_ = std::make_unique<QLockFile>(storageDirectory_ + "/locks/" + project.value("id").toString() + ".lock");
+            projectLock_->setStaleLockTime(0);
+            if (!projectLock_->tryLock(0)) throw std::runtime_error("另一个 CST 操作正在使用该项目");
             const auto target = project.value("source").toObject().value("workingDirectory").toString();
             if (!QFileInfo(target).isDir()) throw std::runtime_error("源码目录不存在；请先同步代码");
+            supervisor_.preflight(project, *cancel);
             queue_.post([this] { event(RuntimeEvent::ChecksPassed); }); stage = Stage::Ports;
             const auto settings = project.value("settings").toObject();
             ports_.reclaim(PortReclaimService::requirements(project.value("requiredPorts").toArray()),
@@ -117,6 +123,7 @@ void ProjectRuntimeService::start() {
             });
             try { supervisor_.stop(); } catch (...) { *failure = std::current_exception(); }
             *empty = supervisor_.empty();
+            if (*empty) projectLock_.reset();
         }
     }, [this, failure, empty](std::exception_ptr error) {
         jobsEmpty_ = *empty;
@@ -136,8 +143,8 @@ void ProjectRuntimeService::stop() {
     newOperation();
     auto empty = std::make_shared<bool>(false);
     queue_.enqueue([this] { event(RuntimeEvent::Stop); }, [this, empty] {
-        try { supervisor_.stop(); *empty = supervisor_.empty(); }
-        catch (...) { *empty = supervisor_.empty(); throw; }
+        try { supervisor_.stop(); *empty = supervisor_.empty(); if (*empty) projectLock_.reset(); }
+        catch (...) { *empty = supervisor_.empty(); if (*empty) projectLock_.reset(); throw; }
     }, [this, empty](std::exception_ptr error) {
         stopQueued_ = false;
         jobsEmpty_ = *empty;
@@ -148,8 +155,8 @@ void ProjectRuntimeService::stop() {
 void ProjectRuntimeService::cleanupAfterFailure(std::exception_ptr original) {
     auto empty = std::make_shared<bool>(false);
     queue_.enqueue([this] { event(RuntimeEvent::UnrecoverableCrash); }, [this, empty] {
-        try { supervisor_.stop(); *empty = supervisor_.empty(); }
-        catch (...) { *empty = supervisor_.empty(); throw; }
+        try { supervisor_.stop(); *empty = supervisor_.empty(); if (*empty) projectLock_.reset(); }
+        catch (...) { *empty = supervisor_.empty(); if (*empty) projectLock_.reset(); throw; }
     }, [this, original, empty](std::exception_ptr error) {
         jobsEmpty_ = *empty; if (jobsEmpty_) event(RuntimeEvent::JobsEmpty, true);
         finish(error ? error : original, {});

@@ -155,20 +155,20 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
         }; return;
     }
     if (type == "array") {
-        auto data = std::make_shared<QJsonArray>(initial.toArray());
+        auto items = std::make_shared<QJsonArray>(initial.toArray());
         auto *list = new QListWidget(this); list->setMinimumHeight(100); layout->addWidget(list);
-        const auto refresh = [list,data] { const auto row = list->currentRow(); list->clear(); for(const auto &item:*data) list->addItem(summary(item)); if(!data->isEmpty()) list->setCurrentRow(qBound(0,row,int(data->size())-1)); };
+        const auto refresh = [list,items] { const auto row = list->currentRow(); list->clear(); for(const auto &item:*items) list->addItem(summary(item)); if(!items->isEmpty()) list->setCurrentRow(qBound(0,row,int(items->size())-1)); };
         refresh(); auto *buttons = new QHBoxLayout; layout->addLayout(buttons);
         auto *add = new QPushButton("添加",this); auto *edit = new QPushButton("编辑",this); auto *remove = new QPushButton("删除",this); auto *up = new QPushButton("上移",this); auto *down = new QPushButton("下移",this);
         for(auto *button:{add,edit,remove,up,down}) buttons->addWidget(button);
         const auto itemRule = rule.value("items").toObject();
-        connect(add,&QPushButton::clicked,this,[this,data,itemRule,refresh] { if(auto value=editDialog(schema_,itemRule,initialValue(schema_,itemRule),this)) { data->append(*value); refresh(); emit changed(); } });
-        const auto editItem = [this,list,data,itemRule,refresh] { const auto row=list->currentRow(); if(row<0)return; if(auto value=editDialog(schema_,itemRule,(*data)[row],this)) { (*data)[row]=*value; refresh(); emit changed(); } };
+        connect(add,&QPushButton::clicked,this,[this,items,itemRule,refresh] { if(auto value=editDialog(schema_,itemRule,initialValue(schema_,itemRule),this)) { items->append(*value); refresh(); emit changed(); } });
+        const auto editItem = [this,list,items,itemRule,refresh] { const auto row=list->currentRow(); if(row<0)return; if(auto value=editDialog(schema_,itemRule,(*items)[row],this)) { (*items)[row]=*value; refresh(); emit changed(); } };
         connect(edit,&QPushButton::clicked,this,editItem); connect(list,&QListWidget::itemDoubleClicked,this,editItem);
-        connect(remove,&QPushButton::clicked,this,[this,list,data,refresh] { if(list->currentRow()<0)return; data->removeAt(list->currentRow()); refresh(); emit changed(); });
-        const auto move = [this,list,data,refresh](int delta) { const auto row=list->currentRow(); const auto destination=row+delta; if(row<0||destination<0||destination>=data->size())return; const auto item=data->takeAt(row); data->insert(destination,item); refresh(); list->setCurrentRow(destination); emit changed(); };
+        connect(remove,&QPushButton::clicked,this,[this,list,items,refresh] { if(list->currentRow()<0)return; items->removeAt(list->currentRow()); refresh(); emit changed(); });
+        const auto move = [this,list,items,refresh](int delta) { const auto row=list->currentRow(); const auto destination=row+delta; if(row<0||destination<0||destination>=items->size())return; const auto item=items->takeAt(row); items->insert(destination,item); refresh(); list->setCurrentRow(destination); emit changed(); };
         connect(up,&QPushButton::clicked,this,[move]{move(-1);}); connect(down,&QPushButton::clicked,this,[move]{move(1);});
-        read_ = [data]{return *data;}; return;
+        read_ = [items]{return *items;}; return;
     }
     if (type == "boolean") {
         auto *box = new QCheckBox(this); box->setChecked(initial.toBool()); layout->addWidget(box); read_=[box]{return box->isChecked();}; connect(box,&QCheckBox::toggled,this,&SchemaEditor::changed); return;

@@ -4,6 +4,7 @@
 #include "SourceSyncService.h"
 #include "TaskSupervisor.h"
 #include <QTimer>
+#include <QLockFile>
 
 namespace cst {
 class ProjectRuntimeService final : public QObject {
@@ -64,6 +65,8 @@ private:
     bool jobsEmpty_ = true;
     bool stopQueued_ = false;
     QMap<QString, TaskStatus> taskStatuses_;
+    QString storageDirectory_;
+    std::unique_ptr<QLockFile> projectLock_;
 };
 }
 Q_DECLARE_METATYPE(cst::ProjectState)

@@ -7,6 +7,7 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
+#include "../TestCompatibility.h"
 #include <QUuid>
 #ifdef Q_OS_WIN
 #include "infrastructure/windows/WindowsPlatform.h"
@@ -97,7 +98,7 @@ private slots:
         Exchange files;files.failInstall=fail;SystemClock clock;QMutex mutex;Cancellation cancel;
         SourceSyncService sync(runner,files,clock,directory.filePath("storage"),QCoreApplication::applicationDirPath()+"/cst-git-askpass.exe",mutex);
         const SyncRequest request{QUuid::createUuid().toString(QUuid::WithoutBraces),remote,"main",target,git_,"CST/git/test/local","integration"};
-        if(fail){QVERIFY_EXCEPTION_THROWN(sync.synchronize(request,cancel,[]{return true;}),std::runtime_error);QFile old(target+"/tracked.txt");QVERIFY(old.open(QIODevice::ReadOnly));QCOMPARE(old.readAll(),"local edit\n");QVERIFY(QFile::exists(target+"/untracked.txt"));}
+        if(fail){QVERIFY_THROWS_EXCEPTION(std::runtime_error, sync.synchronize(request,cancel,[]{return true;}));QFile old(target+"/tracked.txt");QVERIFY(old.open(QIODevice::ReadOnly));QCOMPARE(old.readAll(),"local edit\n");QVERIFY(QFile::exists(target+"/untracked.txt"));}
         else{QCOMPARE(sync.synchronize(request,cancel,[]{return true;}),head);QCOMPARE(run(target,{"rev-parse","HEAD"}),head);QVERIFY(run(target,{"status","--porcelain=v1","--untracked-files=all"}).isEmpty());QVERIFY(!QFile::exists(target+"/ignored.txt"));QVERIFY(!QFile::exists(target+"/untracked.txt"));QVERIFY(!QFileInfo::exists(target+"/nested"));QVERIFY(QFile::exists(target+"/module/module.txt"));}
     }
 };

@@ -34,6 +34,12 @@ int main(int argc,char **argv){
         cst::MainWindow window(runtime,user,admin,logs);
         QObject::connect(&session,&cst::WindowsSession::activateRequested,&window,&cst::MainWindow::activate);
         QObject::connect(&session,&cst::WindowsSession::endSessionRequested,&runtime,&cst::ProjectRuntimeService::close);
+        QObject::connect(&runtime,&cst::ProjectRuntimeService::projectChanged,&logs,[&](const QJsonObject &document){
+            const auto target=document.value("project").toObject().value("source").toObject().value("credentialTarget").toString();
+            if(target.isEmpty())return;
+            try{if(const auto value=credentials.read(target))logs.addSecret(value->password);}
+            catch(const std::exception &e){QMessageBox::critical(&window,"无法读取凭据状态",QString::fromUtf8(e.what()));}
+        });
         QObject::connect(&runtime,&cst::ProjectRuntimeService::processOutput,&logs,[&](const QString &task,const cst::ProcessOutput &output){
             const auto id=runtime.currentProject().value("project").toObject().value("id").toString();
             logs.write(id,task,runtime.operationId(),"process."+output.channel,output.text,"info",output.channel,output.decodeError,output.timestamp);

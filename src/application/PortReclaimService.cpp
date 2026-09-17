@@ -17,7 +17,6 @@ void PortReclaimService::reclaim(const QList<PortRequirement> &required, int tim
     const auto deadline = clock_.monotonicMs() + timeoutMs;
     std::optional<qint64> freeSince;
     QMap<quint32, QSet<quint32>> childrenSeen;
-    QMap<quint32, int> escalationDepth;
     while (clock_.monotonicMs() <= deadline) {
         cancel.check();
         bool free = true;
@@ -32,17 +31,25 @@ void PortReclaimService::reclaim(const QList<PortRequirement> &required, int tim
                 quint32 target = owner.pid;
                 quint32 parent = owner.parentPid;
                 childrenSeen[parent].insert(owner.pid);
-                if (parent != 0 && childrenSeen[parent].size() >= 3 && escalationDepth.value(parent) < maxAncestorEscalation) {
+                int depth = 0;
+                while (parent != 0 && childrenSeen[parent].size() >= 3 && depth < maxAncestorEscalation) {
                     target = parent;
                     const auto grandparent = ports_.parentPid(parent);
-                    escalationDepth[grandparent] = escalationDepth.value(parent) + 1;
                     childrenSeen[grandparent].insert(parent);
+                    parent = grandparent;
+                    ++depth;
                 }
-                const bool serviceStopped = ports_.stopService(target, cancel);
-                if (serviceStopped) clock_.sleep(2000, cancel);
-                bool stillOwned = false;
-                for (const auto &remaining : ports_.owners(port)) if (remaining.pid == owner.pid) stillOwned = true;
-                if (stillOwned) ports_.terminateTree(target, port, cancel);
+                try {
+                    const bool serviceStopped = ports_.stopService(target, cancel);
+                    if (serviceStopped) clock_.sleep(2000, cancel);
+                    bool stillOwned = false;
+                    for (const auto &remaining : ports_.owners(port)) if (remaining.pid == owner.pid) stillOwned = true;
+                    if (stillOwned) ports_.terminateTree(target, port, cancel);
+                } catch (const Cancelled &) { throw; }
+                catch (const std::exception &e) {
+                    throw std::runtime_error(("端口=" + port.protocol + ":" + port.address + ':' + QString::number(port.port) +
+                        " PID=" + QString::number(owner.pid) + " 映像=" + owner.imagePath + "：" + QString::fromUtf8(e.what())).toUtf8().constData());
+                }
                 if (clock_.monotonicMs() > deadline) break;
             }
         }
