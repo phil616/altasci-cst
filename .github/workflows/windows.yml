@@ -1,0 +1,81 @@
+name: Windows build and package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure MSVC 2022 x64 and SDK 26100
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'MSVC 2022 v143 is missing' }
+          $command = "`"$vs/Common7/Tools/VsDevCmd.bat`" -arch=x64 -host_arch=x64 -winsdk=10.0.26100.0 -vcvars_ver=14.44 >nul && set"
+          $environment = cmd /d /s /c $command
+          if ($LASTEXITCODE -ne 0) { throw 'MSVC environment initialization failed' }
+          foreach ($entry in $environment) {
+            if ($entry -match '^([^=]+)=(.*)$') {
+              "$($Matches[1])=$($Matches[2])" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+            }
+          }
+      - uses: actions/cache@v4
+        with:
+          path: C:/cst-tools
+          key: cst-windows-qt6.11.2-ifw4.11.0-cmake4.4.3-git2.55.0-v1
+      - name: Install pinned build tools
+        run: ./scripts/install-ci-tools.ps1 -Destination C:/cst-tools
+      - name: Build, test and package
+        run: cmake --workflow --preset windows-package
+      - name: Record build information
+        if: success()
+        run: |
+          $info = @{
+            commit = '${{ github.sha }}'
+            run = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            qt = '6.11.2'
+            cmake = '4.4.3'
+            installerFramework = '4.11.0'
+            git = '2.55.0.windows.1'
+            signed = $false
+          }
+          $info | ConvertTo-Json | Set-Content build/windows/installer/packages/com.cst.app/data/build-info.json -Encoding utf8
+          Get-FileHash build/windows/packages/*.exe -Algorithm SHA256 | Format-List | Out-File build/windows/packages/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: CST-windows-x64-portable-unsigned
+          path: build/windows/installer/packages/com.cst.app/data/
+          retention-days: 30
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: CST-windows-x64-installer-unsigned
+          path: build/windows/packages/
+          retention-days: 30
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: CST-windows-test-logs
+          path: |
+            build/windows/Testing/Temporary/
+            build/windows/CMakeFiles/CMakeConfigureLog.yaml
+          retention-days: 30

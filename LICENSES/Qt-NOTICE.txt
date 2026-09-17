@@ -1,0 +1,22 @@
+CST dynamically links Qt 6.11.2, using Qt Core, Qt Gui, Qt Widgets and Qt Network.
+Qt Test is used only by test executables and is not included in the installer.
+
+Copyright (C) The Qt Company Ltd. and other contributors.
+Qt is a trademark of The Qt Company Ltd.
+
+Qt is distributed under the GNU Lesser General Public License version 3,
+whose text is included in LGPL-3.0.txt, together with GPL-3.0.txt.
+The Qt DLLs and plugins remain separate from CST. Users may replace these
+libraries with compatible modified builds and debug those modifications.
+CST imposes no restriction on reverse engineering for that purpose.
+
+Corresponding Qt source for this release:
+https://download.qt.io/archive/qt/6.11/6.11.2/single/
+https://code.qt.io/cgit/qt/qtbase.git/?h=v6.11.2
+
+Qt third-party component licensing information:
+https://doc.qt.io/qt-6/licenses-used-in-qt.html
+
+Build your replacement Qt libraries as shared MSVC 2022 x64 libraries,
+using the same Qt ABI and compatible build configuration, and replace the
+DLLs/plugins in the CST installation directory with your modified libraries.

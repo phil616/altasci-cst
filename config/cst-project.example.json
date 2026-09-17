@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "id": "7df67f3e-cad8-4e23-97bb-9dc111f70b35",
+    "name": "客户本地开发环境",
+    "description": "启动后端 FastAPI 与前端 Vite，并提供常用入口。",
+    "source": {
+      "repositoryUrl": "https://github.com/example/customer-project.git",
+      "branch": "main",
+      "workingDirectory": "C:\\CSTProjects\\customer-project",
+      "gitExecutable": "C:\\Program Files\\Git\\cmd\\git.exe",
+      "credentialTarget": "CST/git/7df67f3e-cad8-4e23-97bb-9dc111f70b35/github.com"
+    },
+    "toolDirectories": [
+      "C:\\Program Files\\nodejs",
+      "C:\\Users\\Public\\.local\\bin"
+    ],
+    "requiredPorts": [
+      { "protocol": "tcp", "address": "127.0.0.1", "port": 8000, "ownerTaskId": "backend" },
+      { "protocol": "tcp", "address": "127.0.0.1", "port": 5173, "ownerTaskId": "frontend" }
+    ],
+    "tasks": [
+      {
+        "id": "backend",
+        "name": "启动后端",
+        "order": 10,
+        "workingDirectory": "{{PROJECT_DIR}}\\backend",
+        "environment": {
+          "inheritSystem": true,
+          "envFiles": ["{{DATA_DIR}}\\env\\backend.env"],
+          "variables": { "PYTHONUTF8": "1" }
+        },
+        "prepareCommands": [
+          {
+            "id": "backend-sync-deps",
+            "name": "安装后端依赖",
+            "mode": "exec",
+            "program": "uv.exe",
+            "arguments": ["sync", "--frozen"],
+            "timeoutMs": 900000,
+            "successExitCodes": [0]
+          }
+        ],
+        "serviceCommand": {
+          "id": "backend-serve",
+          "name": "运行后端服务",
+          "mode": "exec",
+          "program": "uv.exe",
+          "arguments": ["run", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000"],
+          "timeoutMs": 0,
+          "successExitCodes": [0]
+        },
+        "readiness": {
+          "timeoutMs": 120000,
+          "pollIntervalMs": 500,
+          "successThreshold": 2,
+          "probes": [
+            { "type": "tcp", "address": "127.0.0.1", "port": 8000, "connectTimeoutMs": 1000 },
+            { "type": "http", "url": "http://127.0.0.1:8000/health", "expectedStatusCodes": [200], "requestTimeoutMs": 2000 }
+          ]
+        },
+        "restartPolicy": {
+          "mode": "on_failure",
+          "maxRestarts": 5,
+          "windowSeconds": 600,
+          "backoffSeconds": 1,
+          "maxBackoffSeconds": 30
+        },
+        "shutdownGraceMs": 5000
+      },
+      {
+        "id": "frontend",
+        "name": "启动前端",
+        "order": 20,
+        "workingDirectory": "{{PROJECT_DIR}}\\frontend",
+        "environment": {
+          "inheritSystem": true,
+          "envFiles": ["{{DATA_DIR}}\\env\\frontend.env"],
+          "variables": { "NO_COLOR": "1" }
+        },
+        "prepareCommands": [
+          {
+            "id": "frontend-install-deps",
+            "name": "安装前端依赖",
+            "mode": "shell",
+            "script": "npm.cmd ci",
+            "timeoutMs": 900000,
+            "successExitCodes": [0]
+          }
+        ],
+        "serviceCommand": {
+          "id": "frontend-serve",
+          "name": "运行前端服务",
+          "mode": "shell",
+          "script": "npm.cmd run dev -- --host 127.0.0.1 --port 5173",
+          "timeoutMs": 0,
+          "successExitCodes": [0]
+        },
+        "readiness": {
+          "timeoutMs": 120000,
+          "pollIntervalMs": 500,
+          "successThreshold": 2,
+          "probes": [
+            { "type": "tcp", "address": "127.0.0.1", "port": 5173, "connectTimeoutMs": 1000 },
+            { "type": "http", "url": "http://127.0.0.1:5173/", "expectedStatusCodes": [200], "requestTimeoutMs": 2000 }
+          ]
+        },
+        "restartPolicy": {
+          "mode": "on_failure",
+          "maxRestarts": 5,
+          "windowSeconds": 600,
+          "backoffSeconds": 1,
+          "maxBackoffSeconds": 30
+        },
+        "shutdownGraceMs": 5000
+      }
+    ],
+    "userActions": [
+      { "id": "open-frontend", "label": "打开前端", "order": 10, "type": "open_url", "url": "http://127.0.0.1:5173/", "availableWhen": "running" },
+      { "id": "open-docs", "label": "打开文档", "order": 20, "type": "open_url", "url": "https://docs.example.com/customer-project", "availableWhen": "always" },
+      { "id": "feedback", "label": "问题反馈", "order": 30, "type": "open_url", "url": "https://support.example.com/forms/customer-project", "availableWhen": "always" }
+    ],
+    "settings": {
+      "portReclaimTimeoutMs": 15000,
+      "maxAncestorEscalation": 8
+    }
+  }
+}

@@ -1,0 +1,18 @@
+function(cst_sign file)
+  if(NOT CST_PRODUCTION_SIGNING)
+    return()
+  endif()
+  foreach(variable CST_SIGN_PFX CST_SIGN_PFX_PASSWORD CST_SIGN_TIMESTAMP_URL)
+    if("$ENV{${variable}}" STREQUAL "")
+      message(FATAL_ERROR "Production signing requires ${variable}")
+    endif()
+  endforeach()
+  find_program(CST_SIGNTOOL signtool.exe HINTS "$ENV{WindowsSdkDir}/bin/10.0.26100.0/x64" REQUIRED)
+  execute_process(COMMAND "${CST_SIGNTOOL}" sign /f "$ENV{CST_SIGN_PFX}" /p "$ENV{CST_SIGN_PFX_PASSWORD}"
+    /fd SHA256 /td SHA256 /tr "$ENV{CST_SIGN_TIMESTAMP_URL}" "${file}"
+    RESULT_VARIABLE status OUTPUT_QUIET ERROR_QUIET)
+  if(NOT status EQUAL 0)
+    message(FATAL_ERROR "Signing failed for ${file}; certificate details were suppressed")
+  endif()
+  execute_process(COMMAND "${CST_SIGNTOOL}" verify /pa /all "${file}" COMMAND_ERROR_IS_FATAL ANY)
+endfunction()

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package>
+  <DisplayName>Customer Service Terminal</DisplayName>
+  <Description>客户项目启动、服务托管与代码同步</Description>
+  <Version>1.0.0</Version>
+  <ReleaseDate>2026-09-17</ReleaseDate>
+  <Default>true</Default>
+  <ForcedInstallation>true</ForcedInstallation>
+  <RequiresAdminRights>true</RequiresAdminRights>
+  <Script>installscript.qs</Script>
+</Package>

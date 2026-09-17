@@ -1,0 +1,41 @@
+{
+  "version": 10,
+  "cmakeMinimumRequired": {"major": 4, "minor": 4, "patch": 3},
+  "configurePresets": [
+    {
+      "name": "windows-base", "hidden": true, "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/build/windows",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "$env{CST_QT_ROOT}",
+        "CMAKE_SYSTEM_VERSION": "10.0.26100.0",
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release"
+      },
+      "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows"}
+    },
+    {"name": "windows-debug", "inherits": "windows-base"},
+    {"name": "windows-release", "inherits": "windows-base"},
+    {"name": "windows-package", "inherits": "windows-base", "cacheVariables": {"CST_PRODUCTION_SIGNING": "OFF"}},
+    {"name": "windows-package-production", "inherits": "windows-base", "binaryDir": "${sourceDir}/build/windows-production", "cacheVariables": {"CST_PRODUCTION_SIGNING": "ON"}}
+  ],
+  "buildPresets": [
+    {"name": "windows-debug", "configurePreset": "windows-debug", "configuration": "Debug"},
+    {"name": "windows-release", "configurePreset": "windows-release", "configuration": "Release"},
+    {"name": "windows-package-build", "configurePreset": "windows-package", "configuration": "Release"},
+    {"name": "windows-package", "configurePreset": "windows-package", "configuration": "Release", "targets": ["package-installer"]},
+    {"name": "windows-production-build", "configurePreset": "windows-package-production", "configuration": "Release"},
+    {"name": "windows-production-package", "configurePreset": "windows-package-production", "configuration": "Release", "targets": ["package-installer"]}
+  ],
+  "testPresets": [
+    {"name": "windows-debug", "configurePreset": "windows-debug", "configuration": "Debug", "output": {"outputOnFailure": true}, "filter": {"exclude": {"label": "admin"}}, "environment": {"PATH": "$env{CST_QT_ROOT}/bin;$penv{PATH}"}},
+    {"name": "windows-release", "configurePreset": "windows-release", "configuration": "Release", "output": {"outputOnFailure": true}, "filter": {"exclude": {"label": "admin"}}, "environment": {"PATH": "$env{CST_QT_ROOT}/bin;$penv{PATH}"}},
+    {"name": "windows-admin", "configurePreset": "windows-release", "configuration": "Release", "output": {"outputOnFailure": true}, "filter": {"include": {"label": "admin"}}, "environment": {"PATH": "$env{CST_QT_ROOT}/bin;$penv{PATH}"}},
+    {"name": "windows-package", "configurePreset": "windows-package", "configuration": "Release", "output": {"outputOnFailure": true}, "environment": {"PATH": "$env{CST_QT_ROOT}/bin;$penv{PATH}"}},
+    {"name": "windows-production", "configurePreset": "windows-package-production", "configuration": "Release", "output": {"outputOnFailure": true}, "environment": {"PATH": "$env{CST_QT_ROOT}/bin;$penv{PATH}"}}
+  ],
+  "workflowPresets": [
+    {"name": "windows-debug", "steps": [{"type": "configure", "name": "windows-debug"}, {"type": "build", "name": "windows-debug"}, {"type": "test", "name": "windows-debug"}]},
+    {"name": "windows-release", "steps": [{"type": "configure", "name": "windows-release"}, {"type": "build", "name": "windows-release"}, {"type": "test", "name": "windows-release"}]},
+    {"name": "windows-package", "steps": [{"type": "configure", "name": "windows-package"}, {"type": "build", "name": "windows-package-build"}, {"type": "test", "name": "windows-package"}, {"type": "build", "name": "windows-package"}]},
+    {"name": "windows-package-production", "steps": [{"type": "configure", "name": "windows-package-production"}, {"type": "build", "name": "windows-production-build"}, {"type": "test", "name": "windows-production"}, {"type": "build", "name": "windows-production-package"}]}
+  ]
+}
