@@ -84,6 +84,6 @@ jobs:
         with:
           name: CST-windows-test-logs
           path: |
-            build/windows/Testing/Temporary/
+            build/windows/Testing/
             build/windows/CMakeFiles/CMakeConfigureLog.yaml
           retention-days: 30
