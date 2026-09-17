@@ -1,4 +1,5 @@
 #include "AdminPage.h"
+#include "domain/Configuration.h"
 #include "ui/UiSupport.h"
 #include <QGridLayout>
 #include <QApplication>
@@ -79,7 +80,7 @@ void AdminPage::setField(const QString &field,const QJsonValue &value){auto proj
 SchemaEditor *AdminPage::fieldEditor(const QString &field,QWidget *parent){
     auto rule=schema_.value("$defs").toObject().value("project").toObject().value("properties").toObject().value(field).toObject();
     if(field=="description")rule["uiMultiline"]="description";
-    auto *editor=new SchemaEditor(schema_,rule,draft_.value("project").toObject().value(field),parent);editor->setObjectName("project."+field);
+    auto *editor=new SchemaEditor(schema_,rule,draft_.value("project").toObject().value(field),parent,[this](const QString &text){return resolvePathForPreview(text);});editor->setObjectName("project."+field);
     connect(editor,&SchemaEditor::changed,this,[this,editor,field]{setField(field,editor->value());});editControls_.append(editor);return editor;
 }
 QWidget *AdminPage::page(int index){return qobject_cast<QScrollArea *>(pages_->widget(index))->widget();}
@@ -100,6 +101,7 @@ SyncRequest AdminPage::request()const{
     return {project.value("id").toString(),source.value("repositoryUrl").toString(),source.value("branch").toString(),source.value("workingDirectory").toString(),source.value("gitExecutable").toString(),source.value("credentialTarget").toString(),runtime_.operationId()};
 }
 void AdminPage::save(){
+    normalizeDraftPaths();
     auto project=draft_.value("project").toObject();auto source=project.value("source").toObject();
     source["credentialTarget"]="CST/git/"+project.value("id").toString()+'/'+QUrl(source.value("repositoryUrl").toString()).host();project["source"]=source;draft_["project"]=project;
     const auto issues=configuration_.validate(draft_);if(!issues.isEmpty()){showConfigurationProblem(issuesText(issues));return;}
@@ -115,7 +117,7 @@ void AdminPage::buildTasks(QWidget *parent){
     connect(list,&QListWidget::currentRowChanged,this,[this,detail,details,items,active,taskRule,list,empty](int row){
         if(*active){editControls_.removeAll(*active);details->removeWidget(*active);(*active)->deleteLater();*active=nullptr;}
         empty->setVisible(row<0||row>=items->size());if(row<0||row>=items->size())return;
-        *active=new SchemaEditor(schema_,taskRule,(*items)[row],detail);details->addWidget(*active);editControls_.append(*active);(*active)->setEnabled(runtime_.editable());
+        *active=new SchemaEditor(schema_,taskRule,(*items)[row],detail,[this](const QString &text){return resolvePathForPreview(text);});details->addWidget(*active);editControls_.append(*active);(*active)->setEnabled(runtime_.editable());
         connect(*active,&SchemaEditor::changed,this,[this,items,active,list,row]{(*items)[row]=(*active)->value();list->item(row)->setText((*items)[row].toObject().value("name").toString());setField("tasks",*items);});
     });
     editControls_.append(button("添加任务",leftLayout,[this,items,list,refresh,taskRule]{auto value=SchemaEditor::initialValue(schema_,taskRule).toObject();value["name"]="新任务";value["order"]=int(items->size()+1)*10;auto service=value.value("serviceCommand").toObject();service["timeoutMs"]=0;value["serviceCommand"]=service;items->append(value);refresh();list->setCurrentRow(int(items->size())-1);setField("tasks",*items);}));
@@ -225,6 +227,26 @@ void AdminPage::refreshCredentialStatus(){
     if(target.isEmpty()){credentialStatus_->setText("凭据：保存项目后自动生成名称");return;}
     try{credentialStatus_->setText(credentials_.read(target)?"凭据：已保存":"凭据：未保存");}
     catch(const std::exception &e){credentialStatus_->setText(QString::fromUtf8(e.what()));}
+}
+QString AdminPage::resolvePathForPreview(const QString &text) const{
+    const auto project=draft_.value("project").toObject();const auto id=project.value("id").toString();const auto source=project.value("source").toObject().value("workingDirectory").toString();
+    try{return expandPlaceholders(text,{{"PROJECT_DIR",source},{"DATA_DIR",paths_.dataDirectory(id)},{"LOG_DIR",paths_.logDirectory(id)}});}catch(...){return text;}
+}
+void AdminPage::normalizeDraftPaths(){
+    if(draft_.isEmpty())return;
+    auto project=draft_.value("project").toObject();
+    auto source=project.value("source").toObject();source["workingDirectory"]=normalizeWindowsPathInput(source.value("workingDirectory").toString());source["gitExecutable"]=normalizeWindowsPathInput(source.value("gitExecutable").toString());project["source"]=source;
+    QJsonArray tools;for(const auto &value:project.value("toolDirectories").toArray())tools.append(normalizeWindowsPathInput(value.toString()));project["toolDirectories"]=tools;
+    QJsonArray tasks=project.value("tasks").toArray();
+    for(qsizetype i=0;i<tasks.size();++i){
+        auto task=tasks[i].toObject();task["workingDirectory"]=normalizeWindowsPathInput(task.value("workingDirectory").toString());
+        auto env=task.value("environment").toObject();QJsonArray envFiles;for(const auto &value:env.value("envFiles").toArray())envFiles.append(normalizeWindowsPathInput(value.toString()));env["envFiles"]=envFiles;task["environment"]=env;
+        auto normalizeCommand=[](QJsonObject command){if(command.value("mode").toString()=="exec")command["program"]=normalizeWindowsPathInput(command.value("program").toString());return command;};
+        auto prepare=task.value("prepareCommands").toArray();for(qsizetype j=0;j<prepare.size();++j)prepare[j]=normalizeCommand(prepare[j].toObject());task["prepareCommands"]=prepare;
+        task["serviceCommand"]=normalizeCommand(task.value("serviceCommand").toObject());
+        tasks[i]=task;
+    }
+    project["tasks"]=tasks;draft_["project"]=project;
 }
 void AdminPage::showConfigurationProblem(const QString &message){navigation_->setCurrentRow(7);if(issues_)issues_->setText(message);}
 void AdminPage::appendLog(const QString &task,const QString &line){const auto display=formatLogLine(line);logLines_.append({task,display});if(logLines_.size()>5000)logLines_.removeFirst();if(logView_&&(taskFilter_->currentData().toString().isEmpty()||taskFilter_->currentData().toString()==task)&&display.contains(search_->text(),Qt::CaseInsensitive))logView_->appendPlainText(display);}

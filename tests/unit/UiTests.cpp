@@ -3,6 +3,7 @@
 #include "ui/UiSupport.h"
 #include <QDir>
 #include <QTabWidget>
+#include <QToolButton>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QScrollArea>
@@ -65,6 +66,16 @@ private slots:
         QCOMPARE(page.width(),1000);QTRY_COMPARE(docs->geometry().top(),frontend->geometry().top());QTRY_VERIFY(feedback->geometry().top()>docs->geometry().top());
         page.setFixedSize(800,700);QCOMPARE(page.width(),800);QTRY_VERIFY(docs->geometry().top()>frontend->geometry().top());
         QVERIFY(main->height()>=main->fontMetrics().height()+12);
+    }
+    void pathEditorConvertsAndPreviews(){
+        const auto schema=readJson(CST_SOURCE_DIR "/config/cst-project.schema.json");
+        SchemaEditor editor(schema,{{"type","string"},{"uiPathMode","directory"}},"C:/Program Files/App");editor.show();
+        auto *line=editor.findChild<QLineEdit *>();QVERIFY(line);
+        bool browse=false,open=false;for(auto *button:editor.findChildren<QToolButton *>()){if(button->text()=="浏览…")browse=true;if(button->text()=="打开")open=true;}
+        QVERIFY(browse);QVERIFY(open);
+        line->setText("  C:/Program Files/My App  ");QTest::keyClick(line,Qt::Key_Return);
+        QCOMPARE(line->text(),QString("C:\\Program Files\\My App"));
+        QCOMPARE(editor.value().toString(),QString("C:\\Program Files\\My App"));
     }
     void commandModesExclusive(){
         const auto schema=readJson(CST_SOURCE_DIR "/config/cst-project.schema.json");

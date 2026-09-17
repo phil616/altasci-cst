@@ -1,11 +1,17 @@
 #include "SchemaEditor.h"
+#include "domain/Configuration.h"
 #include "ui/UiSupport.h"
 #include <QTabWidget>
 #include <QGroupBox>
+#include <QHBoxLayout>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QFontDatabase>
 #include <QHeaderView>
@@ -13,12 +19,15 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
 #include <QTableWidget>
+#include <QToolButton>
 #include <QVBoxLayout>
+#include <QUrl>
 #include <QUuid>
 #include <limits>
 #include <algorithm>
@@ -72,6 +81,11 @@ QString fieldHelp(const QString &key) {
     };
     return hints.value(key);
 }
+QString pathModeForKey(const QString &key) {
+    if (key == "workingDirectory" || key == "toolDirectories") return "directory";
+    if (key == "envFiles" || key == "gitExecutable" || key == "program") return "file";
+    return {};
+}
 QString summary(const QJsonValue &value) {
     if (value.isObject()) {
         const auto object = value.toObject();
@@ -84,10 +98,10 @@ QString summary(const QJsonValue &value) {
     if (value.isDouble()) return QString::number(value.toDouble());
     return value.toString();
 }
-std::optional<QJsonValue> editDialog(const QJsonObject &schema, const QJsonObject &rule, const QJsonValue &value, QWidget *parent) {
+std::optional<QJsonValue> editDialog(const QJsonObject &schema, const QJsonObject &rule, const QJsonValue &value, const SchemaEditor::PathResolver &pathResolver, QWidget *parent) {
     QDialog dialog(parent); dialog.setWindowTitle("编辑设置"); dialog.resize(760, 640);
     auto *layout = new QVBoxLayout(&dialog); layout->setContentsMargins(24,24,24,24); layout->setSpacing(16); auto *scroll = new QScrollArea(&dialog); scroll->setWidgetResizable(true);
-    auto *editor = new SchemaEditor(schema, rule, value); editor->setContentsMargins(16,16,16,16); scroll->setWidget(editor); layout->addWidget(scroll);
+    auto *editor = new SchemaEditor(schema, rule, value, nullptr, pathResolver); editor->setContentsMargins(16,16,16,16); scroll->setWidget(editor); layout->addWidget(scroll);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog); layout->addWidget(buttons);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -95,8 +109,8 @@ std::optional<QJsonValue> editDialog(const QJsonObject &schema, const QJsonObjec
     return std::nullopt;
 }
 }
-SchemaEditor::SchemaEditor(QJsonObject schema, QJsonObject rule, QJsonValue value, QWidget *parent)
-    : QWidget(parent), schema_(std::move(schema)), rule_(std::move(rule)) { build(rule_, std::move(value)); }
+SchemaEditor::SchemaEditor(QJsonObject schema, QJsonObject rule, QJsonValue value, QWidget *parent, PathResolver pathResolver)
+    : QWidget(parent), schema_(std::move(schema)), rule_(std::move(rule)), pathResolver_(std::move(pathResolver)) { build(rule_, std::move(value)); }
 QJsonValue SchemaEditor::value() const { return read_(); }
 QJsonObject SchemaEditor::resolved(QJsonObject rule) const { return resolve(schema_, std::move(rule)); }
 QJsonValue SchemaEditor::initialValue(const QJsonObject &root, QJsonObject rule) {
@@ -135,12 +149,12 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
             selector->addItem(type); if (initial.toObject().value("type") == type) selected = int(i);
         }
         selector->setCurrentIndex(selected); layout->addWidget(selector);
-        auto current = std::make_shared<SchemaEditor *>(new SchemaEditor(schema_, alternatives[selected].toObject(), initial, this));
+        auto current = std::make_shared<SchemaEditor *>(new SchemaEditor(schema_, alternatives[selected].toObject(), initial, this, pathResolver_));
         layout->addWidget(*current); connect(*current, &SchemaEditor::changed, this, &SchemaEditor::changed);
         connect(selector, &QComboBox::currentIndexChanged, this, [this, layout, current, alternatives](int index) {
             layout->removeWidget(*current); (*current)->deleteLater();
             const auto branch = alternatives[index].toObject();
-            *current = new SchemaEditor(schema_, branch, initialValue(schema_, branch), this); layout->addWidget(*current);
+            *current = new SchemaEditor(schema_, branch, initialValue(schema_, branch), this, pathResolver_); layout->addWidget(*current);
             connect(*current, &SchemaEditor::changed, this, &SchemaEditor::changed); emit changed();
         });
         read_ = [current] { return (*current)->value(); }; return;
@@ -168,7 +182,7 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
         for(const auto &group:groups){
             QJsonObject fields;for(const auto &key:group.second)if(properties.contains(key))fields[key]=properties[key];
             auto *scroll=new QScrollArea(tabs);scroll->setWidgetResizable(true);scroll->setFrameShape(QFrame::NoFrame);
-            auto *editor=new SchemaEditor(schema_,{{"type","object"},{"properties",fields}},initial,this);editor->setContentsMargins(16,16,16,16);
+            auto *editor=new SchemaEditor(schema_,{{"type","object"},{"properties",fields}},initial,this,pathResolver_);editor->setContentsMargins(16,16,16,16);
             scroll->setWidget(editor);tabs->addTab(scroll,group.first);editors->append(editor);connect(editor,&SchemaEditor::changed,this,&SchemaEditor::changed);
         }
         read_=[editors]{QJsonObject result;for(auto *editor:*editors){const auto fields=editor->value().toObject();for(auto it=fields.begin();it!=fields.end();++it)result[it.key()]=it.value();}return result;};return;
@@ -196,7 +210,8 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
         for (const auto &key : keys) {
             auto fieldRule = properties.value(key).toObject();
             if (key == "script" || key == "description") fieldRule["uiMultiline"] = key;
-            auto *editor = new SchemaEditor(schema_, fieldRule, initial.toObject().value(key), this);
+            const auto pathMode=pathModeForKey(key);if(!pathMode.isEmpty()&&(fieldRule.value("type")=="string"||fieldRule.value("type")=="array"))fieldRule["uiPathMode"]=pathMode;
+            auto *editor = new SchemaEditor(schema_, fieldRule, initial.toObject().value(key), this, pathResolver_);
             editor->setAccessibleName(fieldLabel(key)); editor->setObjectName(key);
             const auto resolvedRule = resolved(fieldRule);
             if (resolvedRule.value("type") == "object" || resolvedRule.contains("oneOf")) {
@@ -238,9 +253,9 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
         buttons->addStretch();
         const auto updateButtons=[list,edit,remove,up,down]{const auto row=list->currentRow();edit->setEnabled(row>=0);remove->setEnabled(row>=0);up->setEnabled(row>0);down->setEnabled(row>=0&&row+1<list->count());};
         connect(list,&QListWidget::currentRowChanged,this,updateButtons);updateButtons();
-        const auto itemRule = rule.value("items").toObject();
-        connect(add,&QPushButton::clicked,this,[this,items,itemRule,refresh] { if(auto value=editDialog(schema_,itemRule,initialValue(schema_,itemRule),this)) { items->append(*value); refresh(); emit changed(); } });
-        const auto editItem = [this,list,items,itemRule,refresh] { const auto row=list->currentRow(); if(row<0)return; if(auto value=editDialog(schema_,itemRule,(*items)[row],this)) { (*items)[row]=*value; refresh(); emit changed(); } };
+        auto itemRule = rule.value("items").toObject();if(rule.contains("uiPathMode"))itemRule["uiPathMode"]=rule.value("uiPathMode");
+        connect(add,&QPushButton::clicked,this,[this,items,itemRule,refresh] { if(auto value=editDialog(schema_,itemRule,initialValue(schema_,itemRule),pathResolver_,this)) { items->append(*value); refresh(); emit changed(); } });
+        const auto editItem = [this,list,items,itemRule,refresh] { const auto row=list->currentRow(); if(row<0)return; if(auto value=editDialog(schema_,itemRule,(*items)[row],pathResolver_,this)) { (*items)[row]=*value; refresh(); emit changed(); } };
         connect(edit,&QPushButton::clicked,this,editItem); connect(list,&QListWidget::itemDoubleClicked,this,editItem);
         connect(remove,&QPushButton::clicked,this,[this,list,items,refresh] { if(list->currentRow()<0)return; items->removeAt(list->currentRow()); refresh(); emit changed(); });
         const auto move = [this,list,items,refresh](int delta) { const auto row=list->currentRow(); const auto destination=row+delta; if(row<0||destination<0||destination>=items->size())return; const auto item=items->takeAt(row); items->insert(destination,item); refresh(); list->setCurrentRow(destination); emit changed(); };
@@ -264,6 +279,24 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
         connect(text, &QPlainTextEdit::textChanged, this, &SchemaEditor::changed); return;
     }
     auto *line = new QLineEdit(initial.toString(),this); line->setClearButtonEnabled(true); if(rule.contains("maxLength")) line->setMaxLength(rule.value("maxLength").toInt());
-    setFocusProxy(line); layout->addWidget(line); read_=[line]{return line->text();}; connect(line,&QLineEdit::textChanged,this,&SchemaEditor::changed);
+    const auto pathMode=rule.value("uiPathMode").toString();
+    if(pathMode=="directory"||pathMode=="file"){
+        auto *row=new QWidget(this);auto *rowLayout=new QHBoxLayout(row);rowLayout->setContentsMargins(0,0,0,0);rowLayout->setSpacing(6);rowLayout->addWidget(line,1);
+        auto *browse=new QToolButton(row);browse->setText("浏览…");browse->setAutoRaise(true);browse->setAccessibleName(pathMode=="directory"?"选择文件夹":"选择文件");browse->setToolTip(pathMode=="directory"?"调用系统文件管理器选择文件夹":"调用系统文件管理器选择文件");rowLayout->addWidget(browse);
+        auto *open=new QToolButton(row);open->setText("打开");open->setAutoRaise(true);open->setAccessibleName("在系统文件管理器中预览");open->setToolTip("在系统文件管理器中打开目标位置");rowLayout->addWidget(open);
+        setFocusProxy(line);layout->addWidget(row);
+        const auto resolve=[this](const QString &text){if(!pathResolver_)return text;try{return pathResolver_(text);}catch(...){return text;}};
+        connect(line,&QLineEdit::editingFinished,this,[line]{const auto normalized=normalizeWindowsPathInput(line->text());if(normalized!=line->text())line->setText(normalized);});
+        connect(browse,&QToolButton::clicked,this,[this,line,pathMode,resolve]{
+            auto start=normalizeWindowsPathInput(resolve(line->text()));const QFileInfo info(start);if(!info.isDir())start=info.absolutePath();
+            const auto selected=pathMode=="file"?QFileDialog::getOpenFileName(this,"选择文件",start,"所有文件 (*)"):QFileDialog::getExistingDirectory(this,"选择文件夹",start,QFileDialog::ShowDirsOnly|QFileDialog::DontResolveSymlinks);
+            if(!selected.isEmpty())line->setText(QDir::toNativeSeparators(selected));});
+        connect(open,&QToolButton::clicked,this,[this,line,pathMode,resolve]{
+            auto target=normalizeWindowsPathInput(resolve(line->text()));if(target.isEmpty()){QMessageBox::information(this,"打开位置","请先选择或输入路径。");return;}
+            const QFileInfo info(target);if(pathMode=="file")target=info.exists()?info.absoluteFilePath():info.absolutePath();else if(!info.isDir())target=info.absolutePath();
+            if(target.isEmpty()||!QFileInfo(target).isDir()){QMessageBox::warning(this,"打开位置","目标目录不存在："+target);return;}
+            if(!QDesktopServices::openUrl(QUrl::fromLocalFile(target)))QMessageBox::warning(this,"打开位置","无法调用系统文件管理器打开："+target);});
+    }else{setFocusProxy(line);layout->addWidget(line);}
+    read_=[line]{return line->text();};connect(line,&QLineEdit::textChanged,this,&SchemaEditor::changed);
 }
 }

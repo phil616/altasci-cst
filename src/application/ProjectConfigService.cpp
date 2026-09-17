@@ -62,15 +62,16 @@ QJsonObject readJson(const QString &path) {
 ProjectConfigService::ProjectConfigService(ConfigurationValidator validator) : validator_(std::move(validator)) {}
 ValidationIssues ProjectConfigService::validate(const QJsonObject &document) const { return validator_.validate(document); }
 QJsonObject ProjectConfigService::load(const QString &path) const {
-    const auto document = readJson(path);
+    const auto document = normalizeProjectPaths(readJson(path));
     const auto issues = validate(document);
     if (!issues.isEmpty()) throw ConfigurationError(issues);
     return document;
 }
 void ProjectConfigService::save(const QString &path, const QJsonObject &document) const {
-    const auto issues = validate(document);
+    const auto normalized = normalizeProjectPaths(document);
+    const auto issues = validate(normalized);
     if (!issues.isEmpty()) throw ConfigurationError(issues);
-    saveJson(path, document);
+    saveJson(path, normalized);
 }
 QJsonObject ProjectConfigService::create(const QString &name, const QString &sourceDirectory, const QString &gitExecutable) const {
     const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -126,11 +127,12 @@ QString ProjectCatalogService::selectedId() const {
 }
 QString ProjectCatalogService::defaultId() const { CatalogLock lock(storage_); return loadCatalog().value("defaultProjectId").toString(); }
 QString ProjectCatalogService::importProject(const QJsonObject &document) {
-    const auto issues = configuration_.validate(document); if (!issues.isEmpty()) throw ConfigurationError(issues);
+    const auto normalized = normalizeProjectPaths(document);
+    const auto issues = configuration_.validate(normalized); if (!issues.isEmpty()) throw ConfigurationError(issues);
     CatalogLock lock(storage_); auto catalog = loadCatalog(); auto entries = catalog.value("projects").toArray();
-    const auto project = document.value("project").toObject(); const auto id = project.value("id").toString();
+    const auto project = normalized.value("project").toObject(); const auto id = project.value("id").toString();
     for (const auto &entry : entries) if (entry.toObject().value("id") == id) fail("同 ID 项目已存在；请使用保存配置更新");
-    configuration_.save(configurationPath(id), document);
+    configuration_.save(configurationPath(id), normalized);
     entries.append(QJsonObject{{"id", id}, {"name", project.value("name")}, {"configurationPath", configurationPath(id)}});
     catalog["projects"] = entries;
     if (catalog.value("defaultProjectId").toString().isEmpty()) catalog["defaultProjectId"] = id;

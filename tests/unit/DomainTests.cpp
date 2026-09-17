@@ -82,6 +82,28 @@ private slots:
         QTest::newRow("slash-quote") << "a\\\"b" << "\"a\\\\\\\"b\"";
     }
     void quoting() { QFETCH(QString, input); QFETCH(QString, expected); QCOMPARE(quoteWindowsArgument(input), expected); }
+    void normalizedPathInputs() {
+        QCOMPARE(normalizeWindowsPathInput("  C:/Program Files/My App  "), QString("C:\\Program Files\\My App"));
+        QCOMPARE(normalizeWindowsPathInput("\"C:/Program Files/My App\""), QString("C:\\Program Files\\My App"));
+        QCOMPARE(normalizeWindowsPathInput("C:/folder/../files"), QString("C:\\files"));
+        QCOMPARE(normalizeWindowsPathInput("//server/share/folder name"), QString("\\\\server\\share\\folder name"));
+        QCOMPARE(normalizeWindowsPathInput("{{PROJECT_DIR}}/backend"), QString("{{PROJECT_DIR}}\\backend"));
+        QCOMPARE(normalizeWindowsPathInput("C:\\"), QString("C:\\"));
+        QCOMPARE(normalizeWindowsPathInput("uv.exe"), QString("uv.exe"));
+    }
+    void normalizedProjectPaths() {
+        auto document=example_;auto project=document["project"].toObject();auto source=project["source"].toObject();
+        source["workingDirectory"]="C:/Program Files/My Project";source["gitExecutable"]="C:/Program Files/Git/cmd/git.exe";project["source"]=source;
+        project["toolDirectories"]=QJsonArray{"C:/Program Files/nodejs"};
+        auto tasks=project["tasks"].toArray();auto task=tasks[0].toObject();task["workingDirectory"]="{{PROJECT_DIR}}/backend";auto env=task["environment"].toObject();env["envFiles"]=QJsonArray{"{{DATA_DIR}}/env/backend.env"};task["environment"]=env;auto service=task["serviceCommand"].toObject();service["program"]="C:/Program Files/My App/app.exe";task["serviceCommand"]=service;tasks[0]=task;project["tasks"]=tasks;document["project"]=project;
+        const auto normalized=normalizeProjectPaths(document);const auto np=normalized["project"].toObject();
+        QCOMPARE(np["source"].toObject()["workingDirectory"].toString(),QString("C:\\Program Files\\My Project"));
+        QCOMPARE(np["source"].toObject()["gitExecutable"].toString(),QString("C:\\Program Files\\Git\\cmd\\git.exe"));
+        QCOMPARE(np["toolDirectories"].toArray()[0].toString(),QString("C:\\Program Files\\nodejs"));
+        QCOMPARE(np["tasks"].toArray()[0].toObject()["workingDirectory"].toString(),QString("{{PROJECT_DIR}}\\backend"));
+        QCOMPARE(np["tasks"].toArray()[0].toObject()["environment"].toObject()["envFiles"].toArray()[0].toString(),QString("{{DATA_DIR}}\\env\\backend.env"));
+        QCOMPARE(np["tasks"].toArray()[0].toObject()["serviceCommand"].toObject()["program"].toString(),QString("C:\\Program Files\\My App\\app.exe"));
+    }
     void pathsAndUrls() {
         QVERIFY(isWindowsAbsolutePath("C:\\folder")); QVERIFY(isWindowsAbsolutePath("\\\\server\\share\\folder"));
         for (const auto &path : {"C:folder", "\\folder", "relative", "\\\\?\\C:\\test", "C:\\NUL.txt", "C:\\folder.\\x", "C:\\folder:x"}) QVERIFY(!isWindowsAbsolutePath(path));

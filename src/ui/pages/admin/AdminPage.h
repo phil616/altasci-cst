@@ -39,6 +39,8 @@ private:
     void createProject();
     void importProject();
     void refreshCredentialStatus();
+    QString resolvePathForPreview(const QString &text) const;
+    void normalizeDraftPaths();
     ProjectRuntimeService &runtime_;
     ProjectConfigService &configuration_;
     ProjectCatalogService &catalog_;

@@ -107,6 +107,81 @@ void evaluate(const QJsonObject &root, const QJsonObject &rule, const QJsonValue
 QString ProjectPaths::dataDirectory(const QString &id) const { return storageDirectory + "\\data\\" + id; }
 QString ProjectPaths::logDirectory(const QString &id) const { return storageDirectory + "\\logs\\" + id; }
 
+QString normalizeWindowsPathInput(QString path) {
+    path = path.trimmed();
+    if (path.size() >= 2) {
+        const auto quote = path.front();
+        if ((quote == '"' || quote == '\'') && path.back() == quote)
+            path = path.mid(1, path.size() - 2).trimmed();
+    }
+    if (path.isEmpty() || path.contains(QChar::Null)) return path;
+    const bool unc = path.startsWith("\\\\") || path.startsWith("//");
+    path.replace('\\', '/');
+    const bool driveRoot = path.size() >= 3 && path[1] == ':' && path[2] == '/';
+    if (unc) {
+        auto remainder = path.mid(2);
+        remainder = QDir::cleanPath('/' + remainder);
+        if (!remainder.startsWith('/')) remainder.prepend('/');
+        path = "//" + remainder.mid(1);
+    } else {
+        path = QDir::cleanPath(path);
+        if (driveRoot && path.size() == 2 && path[1] == ':') path += '/';
+    }
+    path.replace('/', '\\');
+    return path;
+}
+
+QJsonObject normalizeProjectPaths(QJsonObject document) {
+    auto projectValue = document.value("project");
+    if (!projectValue.isObject()) return document;
+    auto project = projectValue.toObject();
+    auto normalizeArray = [](const QJsonArray &array) {
+        QJsonArray result;
+        for (const auto &value : array) result.append(value.isString() ? QJsonValue(normalizeWindowsPathInput(value.toString())) : value);
+        return result;
+    };
+    if (project.contains("source") && project.value("source").isObject()) {
+        auto source = project.value("source").toObject();
+        for (const auto &key : {"workingDirectory", "gitExecutable"})
+            if (source.value(key).isString()) source[key] = normalizeWindowsPathInput(source.value(key).toString());
+        project["source"] = source;
+    }
+    if (project.contains("toolDirectories")) project["toolDirectories"] = normalizeArray(project.value("toolDirectories").toArray());
+    auto tasks = project.value("tasks").toArray();
+    for (qsizetype i = 0; i < tasks.size(); ++i) {
+        if (!tasks[i].isObject()) continue;
+        auto task = tasks[i].toObject();
+        if (task.value("workingDirectory").isString()) task["workingDirectory"] = normalizeWindowsPathInput(task.value("workingDirectory").toString());
+        if (task.contains("environment") && task.value("environment").isObject()) {
+            auto environment = task.value("environment").toObject();
+            if (environment.contains("envFiles")) environment["envFiles"] = normalizeArray(environment.value("envFiles").toArray());
+            task["environment"] = environment;
+        }
+        auto normalizeCommands = [](const QJsonArray &commands) {
+            QJsonArray normalized;
+            for (const auto &value : commands) {
+                if (!value.isObject()) { normalized.append(value); continue; }
+                auto command = value.toObject();
+                if (command.value("mode").toString() == "exec" && command.value("program").isString())
+                    command["program"] = normalizeWindowsPathInput(command.value("program").toString());
+                normalized.append(command);
+            }
+            return normalized;
+        };
+        if (task.contains("prepareCommands")) task["prepareCommands"] = normalizeCommands(task.value("prepareCommands").toArray());
+        if (task.contains("serviceCommand") && task.value("serviceCommand").isObject()) {
+            auto command = task.value("serviceCommand").toObject();
+            if (command.value("mode").toString() == "exec" && command.value("program").isString())
+                command["program"] = normalizeWindowsPathInput(command.value("program").toString());
+            task["serviceCommand"] = command;
+        }
+        tasks[i] = task;
+    }
+    project["tasks"] = tasks;
+    document["project"] = project;
+    return document;
+}
+
 bool isWindowsAbsolutePath(const QString &path) {
     if (path.contains(QChar::Null) || path.contains(QRegularExpression("[<>\"|?*\\x00-\\x1f]"))) return false;
     QString p = path;

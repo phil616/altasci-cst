@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QStringList>
 
@@ -30,6 +31,8 @@ private:
 };
 
 bool isWindowsAbsolutePath(const QString &path);
+QString normalizeWindowsPathInput(QString path);
+QJsonObject normalizeProjectPaths(QJsonObject document);
 QString normalizedWindowsPath(QString path);
 bool isWithinWindowsPath(const QString &path, const QString &directory);
 bool isAllowedUrl(const QString &text, bool repository = false);
