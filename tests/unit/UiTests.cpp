@@ -4,6 +4,8 @@
 #include <QTabWidget>
 #include <QSpinBox>
 #include <QCheckBox>
+#include <QScrollArea>
+#include <QScrollBar>
 #include "infrastructure/common/SystemClock.h"
 #include <QJsonArray>
 #include <QSignalSpy>
@@ -100,13 +102,19 @@ private slots:
             QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/user.png"));
             adminNavigation->click();
             auto *navigation=admin->findChild<QListWidget *>("adminSidebar");QVERIFY(navigation);
-            for(int row=0;row<navigation->count();++row){navigation->setCurrentRow(row);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/admin-"+QString::number(row)+".png"));}
+            for(int row=0;row<navigation->count();++row){
+                navigation->setCurrentRow(row);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/admin-"+QString::number(row)+".png"));
+                for(auto *scroll:admin->findChildren<QScrollArea *>())if(scroll->isVisible())scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+                QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/admin-"+QString::number(row)+"-bottom.png"));
+                for(auto *scroll:admin->findChildren<QScrollArea *>())scroll->verticalScrollBar()->setValue(0);
+            }
             navigation->setCurrentRow(1);
             auto *tabs=admin->findChild<QTabWidget *>("taskEditorTabs");QVERIFY(tabs);
             for(int index=0;index<tabs->count();++index){tabs->setCurrentIndex(index);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/task-"+QString::number(index)+".png"));}
             navigation->setCurrentRow(6);auto *combo=admin->findChild<QComboBox *>();QVERIFY(combo);
             navigation->setCurrentRow(4);admin->setEnabled(false);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/disabled.png"));admin->setEnabled(true);
             window.findChild<QPushButton *>("userNavigation")->click();user->setState(ProjectState::Failed);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/failed.png"));user->setState(ProjectState::Stopped);
+            window.setFixedSize(1040,680);adminNavigation->click();navigation->setCurrentRow(1);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/compact-task.png"));window.setFixedSize(1180,760);
         }
         admin->setProject({});
         for(auto *editor:admin->findChildren<SchemaEditor *>())QVERIFY(!editor->isEnabled());
@@ -115,7 +123,7 @@ private slots:
             adminNavigation->click();admin->findChild<QListWidget *>("adminSidebar")->setCurrentRow(7);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/empty.png"));
         }
         admin->setProject(example);adminNavigation->click();
-        auto *projectName=admin->findChild<SchemaEditor *>()->findChild<QLineEdit *>();QVERIFY(projectName);projectName->setText("未保存的项目名称");
+        auto *projectName=admin->findChild<SchemaEditor *>("project.name")->findChild<QLineEdit *>();QVERIFY(projectName);projectName->setText("未保存的项目名称");
         auto buttons=admin->findChildren<QPushButton *>();QPushButton *discard=nullptr;QPushButton *save=nullptr;
         for(auto *button:buttons){if(button->text()=="撤销修改")discard=button;if(button->text()=="保存配置")save=button;}
         QVERIFY(discard&&save);QVERIFY(discard->isEnabled());QVERIFY(save->isEnabled());discard->click();QVERIFY(!save->isEnabled());

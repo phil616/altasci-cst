@@ -76,7 +76,7 @@ void AdminPage::setField(const QString &field,const QJsonValue &value){auto proj
 SchemaEditor *AdminPage::fieldEditor(const QString &field,QWidget *parent){
     auto rule=schema_.value("$defs").toObject().value("project").toObject().value("properties").toObject().value(field).toObject();
     if(field=="description")rule["uiMultiline"]="description";
-    auto *editor=new SchemaEditor(schema_,rule,draft_.value("project").toObject().value(field),parent);
+    auto *editor=new SchemaEditor(schema_,rule,draft_.value("project").toObject().value(field),parent);editor->setObjectName("project."+field);
     connect(editor,&SchemaEditor::changed,this,[this,editor,field]{setField(field,editor->value());});editControls_.append(editor);return editor;
 }
 QWidget *AdminPage::page(int index){return qobject_cast<QScrollArea *>(pages_->widget(index))->widget();}
@@ -152,9 +152,7 @@ void AdminPage::rebuild(){
     button("复制日志",logging,[this]{QApplication::clipboard()->setText(logView_->textCursor().hasSelection()?logView_->textCursor().selectedText():logView_->toPlainText());});
     button("打开日志目录",logging,[this]{const auto id=draft_.value("project").toObject().value("id").toString();if(!QDesktopServices::openUrl(QUrl::fromLocalFile(paths_.logDirectory(id))))emit error("无法打开日志目录");});
     editControls_.append(button("导出诊断包",logging,[this]{const auto path=QFileDialog::getSaveFileName(this,"导出诊断包",{},"ZIP (*.zip)");if(path.isEmpty())return;const auto config=runtime_.currentProject();const auto tasks=runtime_.taskSnapshot();const auto operation=runtime_.operationId();runtime_.maintenance([this,config,tasks,path,operation](const Cancellation &cancel){diagnostics_.exportZip(config,tasks,path,operation,cancel);});}));renderLogs();
-    auto *configLayout=column(page(7));section(configLayout,"配置检查","保存前会自动校验；也可手动查看当前草稿的问题。");issues_=new QLabel("配置验证结果将在保存或校验后显示。",page(7));issues_->setWordWrap(true);issues_->setTextInteractionFlags(Qt::TextSelectableByMouse);configLayout->addWidget(issues_);
-    button("校验当前配置",configLayout,[this]{const auto issues=configuration_.validate(draft_);issues_->setText(issues.isEmpty()?"配置有效":issuesText(issues));});
-    section(configLayout,"创建与备份","首次使用可导入已有 JSON，或创建项目后逐页填写配置。");
+    auto *configLayout=column(page(7));    section(configLayout,"创建与备份","首次使用可导入已有 JSON，或创建项目后逐页填写配置。");
     editControls_.append(button("创建项目",configLayout,[this]{if(modified_){emit error("请先保存或放弃编辑");return;}bool ok=false;const auto name=QInputDialog::getText(this,"创建项目","项目名称",QLineEdit::Normal,{},&ok);if(!ok||name.isEmpty())return;draft_=configuration_.create(name,"C:\\CSTProjects\\"+QUuid::createUuid().toString(QUuid::WithoutBraces),"C:\\Program Files\\Git\\cmd\\git.exe");newProject_=true;dirty();rebuild();navigation_->setCurrentRow(0);}));
     editControls_.append(button("导入 JSON",configLayout,[this]{if(modified_){emit error("请先保存或放弃编辑");return;}const auto path=QFileDialog::getOpenFileName(this,"导入项目",{},"JSON (*.json)");if(path.isEmpty())return;try{runtime_.importProject(configuration_.load(path));}catch(const std::exception &e){showConfigurationProblem(QString::fromUtf8(e.what()));}}));
     editControls_.append(button("导出 JSON",configLayout,[this]{const auto path=QFileDialog::getSaveFileName(this,"导出项目",{},"JSON (*.json)");if(!path.isEmpty())runtime_.exportProject(path);}));
@@ -164,7 +162,10 @@ void AdminPage::rebuild(){
     projects->setCurrentIndex(projects->findData(project.value("id").toString()));configLayout->addWidget(projects);editControls_.append(projects);
     editControls_.append(button("切换到所选项目",configLayout,[this,projects]{if(projects->currentIndex()>=0)runtime_.switchProject(projects->currentData().toString());}));
     editControls_.append(button("所选项目设为默认",configLayout,[this,projects]{if(projects->currentIndex()>=0)runtime_.setDefault(projects->currentData().toString());}));
-    editControls_.append(button("删除所选项目配置",configLayout,[this,projects]{if(modified_){emit error("请先保存或放弃编辑");return;}if(projects->currentIndex()>=0&&QMessageBox::question(this,"删除项目配置","确定删除所选项目的配置？此操作无法撤销，源代码目录会保留。",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)==QMessageBox::Yes)runtime_.removeProject(projects->currentData().toString());}));configLayout->addStretch();
+    editControls_.append(button("删除所选项目配置",configLayout,[this,projects]{if(modified_){emit error("请先保存或放弃编辑");return;}if(projects->currentIndex()>=0&&QMessageBox::question(this,"删除项目配置","确定删除所选项目的配置？此操作无法撤销，源代码目录会保留。",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)==QMessageBox::Yes)runtime_.removeProject(projects->currentData().toString());}));
+    section(configLayout,"配置检查","保存前会自动校验；也可手动查看当前草稿的问题。");issues_=new QLabel("配置验证结果将在保存或校验后显示。",page(7));issues_->setWordWrap(true);issues_->setTextInteractionFlags(Qt::TextSelectableByMouse);configLayout->addWidget(issues_);
+    button("校验当前配置",configLayout,[this]{const auto issues=configuration_.validate(draft_);issues_->setText(issues.isEmpty()?"配置有效":issuesText(issues));});
+configLayout->addStretch();
     pages_->setCurrentIndex(selected);updateState();
 }
 void AdminPage::showConfigurationProblem(const QString &message){navigation_->setCurrentRow(7);issues_->setText(message);}

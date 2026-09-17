@@ -204,7 +204,9 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
             } else {
                 auto *label=new QLabel(fieldLabel(key),this);label->setWordWrap(true);label->setFixedWidth(132);label->setContentsMargins(0,8,0,0);label->setBuddy(editor);form->addRow(label, editor);
             }
-            const auto hint=key=="workingDirectory"&&properties.contains("repositoryUrl")?QString("同步代码的本地绝对路径。此目录的内容会被远程代码替换。"):fieldHelp(key);
+            auto hint=key=="workingDirectory"&&properties.contains("repositoryUrl")?QString("同步代码的本地绝对路径。此目录的内容会被远程代码替换。"):fieldHelp(key);
+            if(key=="mode"&&!properties.contains("program"))hint="服务异常退出后按退避间隔重启，达到次数上限后停止。";
+            if(key=="order"&&properties.contains("label"))hint="数值越小，入口在用户页中越靠前。";
             if(!hint.isEmpty()) {editor->setToolTip(hint);editor->layout()->addWidget(helpText(hint,editor));}
             if(key=="credentialTarget")if(auto *line=editor->findChild<QLineEdit *>())line->setReadOnly(true);
             editors->insert(key,editor); connect(editor,&SchemaEditor::changed,this,&SchemaEditor::changed);
