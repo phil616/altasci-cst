@@ -59,6 +59,7 @@ cst_owned(cst_platform_windows)
 add_library(cst_ui STATIC src/ui/MainWindow.cpp src/ui/widgets/SchemaEditor.cpp
   src/ui/pages/user/UserPage.cpp src/ui/pages/admin/AdminPage.cpp)
 target_link_libraries(cst_ui PUBLIC cst_application Qt6::Widgets)
+qt_add_resources(cst_ui "ui_icons" PREFIX "/ui" BASE resources/ui FILES resources/ui/down.png resources/ui/up.png resources/ui/check.png)
 cst_owned(cst_ui)
 qt_add_executable(cst WIN32 src/app/main.cpp resources/cst.rc resources/app.manifest)
 target_link_libraries(cst PRIVATE cst_ui cst_platform_windows)
@@ -88,7 +89,7 @@ target_compile_definitions(cst-unit-ui PRIVATE CST_SOURCE_DIR="${CMAKE_CURRENT_S
 cst_owned(cst-unit-ui)
 foreach(scale 1.25 1.5 2)
   add_test(NAME ui.${scale} COMMAND cst-unit-ui -o "${CMAKE_BINARY_DIR}/Testing/results/ui.${scale}.txt,txt" -o -,txt)
-  set_tests_properties(ui.${scale} PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=${scale}" TIMEOUT 30)
+  set_tests_properties(ui.${scale} PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=${scale};CST_UI_CAPTURE_DIR=${CMAKE_BINARY_DIR}/Testing/screenshots/${scale}" TIMEOUT 30)
 endforeach()
 
 install(TARGETS cst cst-git-askpass cst-signal-helper RUNTIME DESTINATION .)

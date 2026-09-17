@@ -49,6 +49,7 @@ private:
     bool modified_ = false;
     QListWidget *navigation_;
     QLabel *breadcrumb_;
+    QLabel *pageHelp_;
     QStackedWidget *pages_;
     QLabel *saveStatus_;
     QPushButton *save_;

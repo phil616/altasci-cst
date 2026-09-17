@@ -1,6 +1,9 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 #include <QDir>
+#include <QTabWidget>
+#include <QSpinBox>
+#include <QCheckBox>
 #include "infrastructure/common/SystemClock.h"
 #include <QJsonArray>
 #include <QSignalSpy>
@@ -66,6 +69,17 @@ private slots:
         auto *script=editor.findChild<SchemaEditor *>("script")->findChild<QPlainTextEdit *>();QVERIFY(script);
         script->setPlainText("echo first\necho second");QCOMPARE(editor.value().toObject().value("script").toString(),QString("echo first\necho second"));QVERIFY(editor.value().toObject().contains("script"));QVERIFY(!editor.value().toObject().contains("program"));QVERIFY(!editor.value().toObject().contains("arguments"));
     }
+    void taskTabsPreserveConfiguration(){
+        const auto schema=readJson(CST_SOURCE_DIR "/config/cst-project.schema.json");
+        const auto task=readJson(CST_SOURCE_DIR "/config/cst-project.example.json").value("project").toObject().value("tasks").toArray().first().toObject();
+        SchemaEditor editor(schema,{{"$ref","#/$defs/task"}},task);editor.resize(650,500);editor.show();
+        auto *tabs=editor.findChild<QTabWidget *>("taskEditorTabs");QVERIFY(tabs);QCOMPARE(tabs->count(),5);
+        QCOMPARE(editor.value().toObject(),task);
+        for(int index=0;index<tabs->count();++index){tabs->setCurrentIndex(index);QCoreApplication::processEvents();QCOMPARE(editor.value().toObject(),task);}
+        auto *name=editor.findChild<SchemaEditor *>("name")->findChild<QLineEdit *>();QVERIFY(name);name->setText("修改任务名称");
+        auto expected=task;expected["name"]="修改任务名称";QCOMPARE(editor.value().toObject(),expected);
+        QVERIFY(!QPixmap(":/ui/down.png").isNull());QVERIFY(!QPixmap(":/ui/up.png").isNull());QVERIFY(!QPixmap(":/ui/check.png").isNull());
+    }
     void navigationCancellationAndClose(){
         QTemporaryDir directory;const auto schema=readJson(CST_SOURCE_DIR "/config/cst-project.schema.json");
         const ProjectPaths paths{"C:/Program Files/CST","C:/ProgramData/CST","C:/Windows"};
@@ -76,7 +90,7 @@ private slots:
         SourceSyncService sync(runner,files,clock,directory.path(),"askpass",mutex);LogService logs(directory.path());DiagnosticExportService diagnostics(runner,ports,clock,logs,directory.path());
         ProjectRuntimeService runtime(configuration,catalog,supervisor,reclaim,sync);Urls urls;
         auto *user=new UserPage(urls);auto *admin=new AdminPage(runtime,configuration,catalog,credentials,ports,sync,diagnostics,logs,schema,paths);
-        MainWindow window(runtime,user,admin,logs);window.show();runtime.initialize(directory.path());QTRY_VERIFY(!runtime.busy());
+        MainWindow window(runtime,user,admin,logs);window.setFixedSize(1180,760);window.show();runtime.initialize(directory.path());QTRY_VERIFY(!runtime.busy());
         QVERIFY(!runtime.currentProject().isEmpty());auto *main=user->findChild<QPushButton *>("mainAction");
         auto *adminNavigation=window.findChild<QPushButton *>("adminNavigation");QTest::mouseClick(adminNavigation,Qt::LeftButton);QVERIFY(admin->isVisible());QVERIFY(!main->isDefault());
         QTest::mouseClick(window.findChild<QPushButton *>("userNavigation"),Qt::LeftButton);QVERIFY(user->isVisible());QVERIFY(main->isDefault());
@@ -87,8 +101,25 @@ private slots:
             adminNavigation->click();
             auto *navigation=admin->findChild<QListWidget *>("adminSidebar");QVERIFY(navigation);
             for(int row=0;row<navigation->count();++row){navigation->setCurrentRow(row);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/admin-"+QString::number(row)+".png"));}
-            window.findChild<QPushButton *>("userNavigation")->click();
+            navigation->setCurrentRow(1);
+            auto *tabs=admin->findChild<QTabWidget *>("taskEditorTabs");QVERIFY(tabs);
+            for(int index=0;index<tabs->count();++index){tabs->setCurrentIndex(index);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/task-"+QString::number(index)+".png"));}
+            navigation->setCurrentRow(6);auto *combo=admin->findChild<QComboBox *>();QVERIFY(combo);
+            navigation->setCurrentRow(4);admin->setEnabled(false);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/disabled.png"));admin->setEnabled(true);
+            window.findChild<QPushButton *>("userNavigation")->click();user->setState(ProjectState::Failed);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/failed.png"));user->setState(ProjectState::Stopped);
         }
+        admin->setProject({});
+        for(auto *editor:admin->findChildren<SchemaEditor *>())QVERIFY(!editor->isEnabled());
+        for(auto *button:admin->findChildren<QPushButton *>())if(button->text()=="创建项目"||button->text()=="导入 JSON")QVERIFY(button->isEnabled());
+        if(!capture.isEmpty()){
+            adminNavigation->click();admin->findChild<QListWidget *>("adminSidebar")->setCurrentRow(7);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/empty.png"));
+        }
+        admin->setProject(example);adminNavigation->click();
+        auto *projectName=admin->findChild<SchemaEditor *>()->findChild<QLineEdit *>();QVERIFY(projectName);projectName->setText("未保存的项目名称");
+        auto buttons=admin->findChildren<QPushButton *>();QPushButton *discard=nullptr;QPushButton *save=nullptr;
+        for(auto *button:buttons){if(button->text()=="撤销修改")discard=button;if(button->text()=="保存配置")save=button;}
+        QVERIFY(discard&&save);QVERIFY(discard->isEnabled());QVERIFY(save->isEnabled());discard->click();QVERIFY(!save->isEnabled());
+        window.findChild<QPushButton *>("userNavigation")->click();
         runtime.start();QCOMPARE(main->text(),"一键停止");QCOMPARE(runtime.state(),ProjectState::Preflight);
         for(auto *editor:admin->findChildren<SchemaEditor *>())QVERIFY(!editor->isEnabled());
         QSignalSpy close(&runtime,&ProjectRuntimeService::closeReady);window.close();QVERIFY(window.isVisible());

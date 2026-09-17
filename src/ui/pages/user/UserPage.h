@@ -27,6 +27,8 @@ private:
     IUrlLauncher &urls_;
     QLabel *title_;
     QLabel *description_;
+    QLabel *statusHelp_;
+    QLabel *actionsHelp_;
     QPushButton *main_;
     QGridLayout *actions_;
     QList<QPushButton *> buttons_;

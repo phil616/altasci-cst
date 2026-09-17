@@ -48,6 +48,7 @@ add_library(cst_ui STATIC
   ../src/ui/pages/user/UserPage.cpp
   ../src/ui/pages/admin/AdminPage.cpp)
 target_link_libraries(cst_ui PUBLIC cst_application Qt6::Widgets)
+qt_add_resources(cst_ui "ui_icons" PREFIX "/ui" BASE ../resources/ui FILES ../resources/ui/down.png ../resources/ui/up.png ../resources/ui/check.png)
 add_executable(cst-unit-ui unit/UiTests.cpp)
 target_link_libraries(cst-unit-ui PRIVATE cst_ui Qt6::Test)
 target_compile_definitions(cst-unit-ui PRIVATE CST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/..")

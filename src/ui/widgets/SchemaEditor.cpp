@@ -1,4 +1,7 @@
 #include "SchemaEditor.h"
+#include "ui/UiSupport.h"
+#include <QTabWidget>
+#include <QGroupBox>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -43,9 +46,37 @@ QJsonObject resolve(const QJsonObject &root, QJsonObject rule) {
     if (rule.contains("$ref")) return root.value("$defs").toObject().value(rule.value("$ref").toString().mid(8)).toObject();
     return rule;
 }
+QString fieldHelp(const QString &key) {
+    static const QMap<QString,QString> hints{
+        {"id","唯一标识，用于配置引用。请使用稳定的英文、数字或短横线。"},
+        {"order","数值越小越先启动；停止时按相反顺序执行。"},
+        {"workingDirectory","使用绝对路径，或 {{PROJECT_DIR}} 等目录占位符。"},
+        {"mode","exec 直接运行程序；shell 执行多行脚本。"},
+        {"program","填写可执行文件名或完整路径。参数在下方逐项添加。"},
+        {"arguments","每项代表一个参数，无需自行添加外层引号。列表顺序即传入顺序。"},
+        {"timeoutMs","单位为毫秒。长期服务使用 0；准备命令必须设置正数。"},
+        {"repositoryUrl","填写 HTTPS Git 仓库地址；用户名和 PAT 在“环境与凭据”中保存。"},
+        {"branch","同步此远程分支的最新完整代码。"},
+        {"gitExecutable","本机 git.exe 的完整路径，要求 Git 2.45 或更高版本。"},
+        {"credentialTarget","保存项目时自动按项目 ID 和仓库主机生成。"},
+        {"envFiles","按列表顺序读取环境文件，后面的值覆盖前面的同名变量。"},
+        {"variables","这里的值覆盖环境文件中的同名变量。不要在共享配置中保存密钥。"},
+        {"inheritSystem","勾选后继承当前系统的环境变量。"},
+        {"ownerTaskId","填写占用该端口的任务标识，需要与任务配置一致。"},
+        {"availableWhen","running 表示项目运行后可用；always 表示始终可用。"},
+        {"url","点击后由默认浏览器打开此地址。"},
+        {"successExitCodes","命令返回这些退出码时视为成功。"},
+        {"probes","所有探针通过后，任务才会被视为就绪。"},
+        {"maxRestarts","统计窗口内允许的自动重启次数。"},
+        {"shutdownGraceMs","先请求正常退出，超过此时间后终止进程树。"}
+    };
+    return hints.value(key);
+}
 QString summary(const QJsonValue &value) {
     if (value.isObject()) {
         const auto object = value.toObject();
+        if(object.contains("port"))return object.value("protocol").toString().toUpper()+"  "+object.value("address").toString()+":"+QString::number(object.value("port").toInt())+"  →  "+object.value("ownerTaskId").toString();
+        if(object.contains("label"))return object.value("label").toString()+"  ·  "+object.value("url").toString();
         for (const auto &field : {"name", "label", "id", "url", "address"}) if (object.contains(field)) return object.value(field).toString();
         return "设置（" + QString::number(object.size()) + " 项）";
     }
@@ -117,13 +148,31 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
     if (rule.contains("enum")) {
         auto *combo = new QComboBox(this); const auto values = rule.value("enum").toArray();
         for (const auto &value : values) combo->addItem(value.toString()); combo->setCurrentText(initial.toString());
-        layout->addWidget(combo); read_ = [combo] { return combo->currentText(); };
+        setFocusProxy(combo); layout->addWidget(combo); read_ = [combo] { return combo->currentText(); };
         connect(combo, &QComboBox::currentTextChanged, this, &SchemaEditor::changed); return;
     }
     if (rule.contains("const")) {
         const auto value = rule.value("const"); layout->addWidget(new QLabel(summary(value), this)); read_ = [value] { return value; }; return;
     }
     const auto type = rule.value("type").toString();
+    if (type == "object" && rule.value("properties").toObject().contains("serviceCommand") && rule.value("properties").toObject().contains("readiness")) {
+        auto *tabs=new QTabWidget(this);tabs->setObjectName("taskEditorTabs");tabs->setMinimumHeight(360);layout->addWidget(tabs);
+        const auto properties=rule.value("properties").toObject();
+        const QList<QPair<QString,QStringList>> groups{
+            {"基本信息",{"id","name","order","workingDirectory"}},
+            {"命令",{"serviceCommand","prepareCommands"}},
+            {"环境",{"environment"}},
+            {"健康检查",{"readiness"}},
+            {"重启与停止",{"restartPolicy","shutdownGraceMs"}}};
+        auto editors=std::make_shared<QList<SchemaEditor *>>();
+        for(const auto &group:groups){
+            QJsonObject fields;for(const auto &key:group.second)if(properties.contains(key))fields[key]=properties[key];
+            auto *scroll=new QScrollArea(tabs);scroll->setWidgetResizable(true);scroll->setFrameShape(QFrame::NoFrame);
+            auto *editor=new SchemaEditor(schema_,{{"type","object"},{"properties",fields}},initial,this);editor->setContentsMargins(16,16,16,16);
+            scroll->setWidget(editor);tabs->addTab(scroll,group.first);editors->append(editor);connect(editor,&SchemaEditor::changed,this,&SchemaEditor::changed);
+        }
+        read_=[editors]{QJsonObject result;for(auto *editor:*editors){const auto fields=editor->value().toObject();for(auto it=fields.begin();it!=fields.end();++it)result[it.key()]=it.value();}return result;};return;
+    }
     if (type == "object" && rule.value("properties").toObject().isEmpty()) {
         auto *table = new QTableWidget(this); table->setMinimumHeight(144); table->setMaximumHeight(240); table->setColumnCount(2); table->setHorizontalHeaderLabels({"变量名", "值"}); table->horizontalHeader()->setStretchLastSection(true);
         const auto object = initial.toObject(); table->setRowCount(int(object.size())); int row = 0;
@@ -151,9 +200,13 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
             editor->setAccessibleName(fieldLabel(key)); editor->setObjectName(key);
             const auto resolvedRule = resolved(fieldRule);
             if (resolvedRule.value("type") == "object" || resolvedRule.contains("oneOf")) {
-                auto *heading = new QLabel(fieldLabel(key), this); auto font = heading->font(); font.setBold(true); heading->setFont(font);
-                form->addRow(heading); form->addRow(editor);
-            } else form->addRow(fieldLabel(key), editor);
+                auto *group=new QGroupBox(fieldLabel(key),this);auto *groupLayout=new QVBoxLayout(group);groupLayout->setSpacing(12);groupLayout->addWidget(editor);form->addRow(group);
+            } else {
+                auto *label=new QLabel(fieldLabel(key),this);label->setWordWrap(true);label->setFixedWidth(132);label->setContentsMargins(0,8,0,0);label->setBuddy(editor);form->addRow(label, editor);
+            }
+            const auto hint=key=="workingDirectory"&&properties.contains("repositoryUrl")?QString("同步代码的本地绝对路径。此目录的内容会被远程代码替换。"):fieldHelp(key);
+            if(!hint.isEmpty()) {editor->setToolTip(hint);editor->layout()->addWidget(helpText(hint,editor));}
+            if(key=="credentialTarget")if(auto *line=editor->findChild<QLineEdit *>())line->setReadOnly(true);
             editors->insert(key,editor); connect(editor,&SchemaEditor::changed,this,&SchemaEditor::changed);
         }
         auto applyMode = [editors,form] {
@@ -172,12 +225,17 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
     }
     if (type == "array") {
         auto items = std::make_shared<QJsonArray>(initial.toArray());
-        auto *list = new QListWidget(this); list->setFixedHeight(112); layout->addWidget(list);
+        auto *list = new QListWidget(this); list->setFixedHeight(128); layout->addWidget(list);
         const auto refresh = [list,items] { const auto row = list->currentRow(); list->clear(); for(const auto &item:*items) list->addItem(summary(item)); if(!items->isEmpty()) list->setCurrentRow(qBound(0,row,int(items->size())-1)); };
+        auto *empty=helpText("暂无条目。点击“添加”创建第一项。",this);layout->addWidget(empty);
+        const auto updateEmpty=[empty,items]{empty->setVisible(items->isEmpty());};
+        connect(this,&SchemaEditor::changed,this,updateEmpty);updateEmpty();
         refresh(); auto *buttons = new QHBoxLayout; layout->addLayout(buttons);
         auto *add = new QPushButton("添加",this); auto *edit = new QPushButton("编辑",this); auto *remove = new QPushButton("删除",this); auto *up = new QPushButton("上移",this); auto *down = new QPushButton("下移",this);
         for(auto *button:{add,edit,remove,up,down}) buttons->addWidget(button);
         buttons->addStretch();
+        const auto updateButtons=[list,edit,remove,up,down]{const auto row=list->currentRow();edit->setEnabled(row>=0);remove->setEnabled(row>=0);up->setEnabled(row>0);down->setEnabled(row>=0&&row+1<list->count());};
+        connect(list,&QListWidget::currentRowChanged,this,updateButtons);updateButtons();
         const auto itemRule = rule.value("items").toObject();
         connect(add,&QPushButton::clicked,this,[this,items,itemRule,refresh] { if(auto value=editDialog(schema_,itemRule,initialValue(schema_,itemRule),this)) { items->append(*value); refresh(); emit changed(); } });
         const auto editItem = [this,list,items,itemRule,refresh] { const auto row=list->currentRow(); if(row<0)return; if(auto value=editDialog(schema_,itemRule,(*items)[row],this)) { (*items)[row]=*value; refresh(); emit changed(); } };
@@ -188,11 +246,11 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
         read_ = [items]{return *items;}; return;
     }
     if (type == "boolean") {
-        auto *box = new QCheckBox(this); box->setChecked(initial.toBool()); layout->addWidget(box); read_=[box]{return box->isChecked();}; connect(box,&QCheckBox::toggled,this,&SchemaEditor::changed); return;
+        auto *box = new QCheckBox("启用",this); box->setChecked(initial.toBool()); layout->addWidget(box); read_=[box]{return box->isChecked();}; connect(box,&QCheckBox::toggled,this,&SchemaEditor::changed); return;
     }
     if (type == "integer") {
         auto *spin = new QSpinBox(this); spin->setMaximumWidth(220); spin->setRange(rule.value("minimum").toInt(std::numeric_limits<int>::min()),rule.value("maximum").toInt(std::numeric_limits<int>::max())); spin->setValue(initial.toInt());
-        layout->addWidget(spin); read_=[spin]{return spin->value();}; connect(spin,&QSpinBox::valueChanged,this,&SchemaEditor::changed); return;
+        setFocusProxy(spin); layout->addWidget(spin); read_=[spin]{return spin->value();}; connect(spin,&QSpinBox::valueChanged,this,&SchemaEditor::changed); return;
     }
     if (rule.contains("uiMultiline")) {
         auto *text = new QPlainTextEdit(initial.toString(), this);
@@ -200,10 +258,10 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
         text->setFixedHeight(script ? 180 : 104);
         text->setPlaceholderText(script ? "输入要执行的脚本，可包含多行命令" : "简要说明项目的用途");
         if (script) { text->setProperty("role", "code"); text->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont)); text->setLineWrapMode(QPlainTextEdit::NoWrap); }
-        layout->addWidget(text); read_ = [text] { return text->toPlainText(); };
+        setFocusProxy(text); layout->addWidget(text); read_ = [text] { return text->toPlainText(); };
         connect(text, &QPlainTextEdit::textChanged, this, &SchemaEditor::changed); return;
     }
     auto *line = new QLineEdit(initial.toString(),this); line->setClearButtonEnabled(true); if(rule.contains("maxLength")) line->setMaxLength(rule.value("maxLength").toInt());
-    layout->addWidget(line); read_=[line]{return line->text();}; connect(line,&QLineEdit::textChanged,this,&SchemaEditor::changed);
+    setFocusProxy(line); layout->addWidget(line); read_=[line]{return line->text();}; connect(line,&QLineEdit::textChanged,this,&SchemaEditor::changed);
 }
 }
