@@ -67,7 +67,7 @@ if (-not (Test-Path "$git/cmd/git.exe")) {
 "$qt/bin" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
 & "$qt/bin/qmake.exe" -query QT_VERSION
 if ($LASTEXITCODE -ne 0) { throw 'Qt SDK failed verification' }
-& "$ifw/bin/binarycreator.exe" --version
+& "$ifw/bin/installerbase.exe" --version
 if ($LASTEXITCODE -ne 0) { throw 'IFW failed verification' }
 & "$git/cmd/git.exe" --version
 if ($LASTEXITCODE -ne 0) { throw 'Git failed verification' }
