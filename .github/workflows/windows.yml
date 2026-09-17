@@ -51,6 +51,13 @@ jobs:
           key: cst-windows-qt6.11.2-ifw4.11.0-cmake4.4.3-git2.55.0-v1
       - name: Build, test and package
         run: cmake --workflow --preset windows-package
+      - name: Print Qt test reports
+        if: always()
+        run: |
+          Get-ChildItem build/windows/Testing/results/*.txt -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Output "Test report: $($_.Name)"
+            Get-Content $_.FullName
+          }
       - name: Record build information
         if: success()
         run: |

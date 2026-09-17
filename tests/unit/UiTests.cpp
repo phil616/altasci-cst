@@ -38,7 +38,7 @@ class UiTests final : public QObject {
     Q_OBJECT
 private slots:
     void userActionsAndState(){
-        Urls urls;UserPage page(urls);page.resize(1000,700);
+        Urls urls;UserPage page(urls);page.setFixedSize(1000,700);
         const auto example=readJson(CST_SOURCE_DIR "/config/cst-project.example.json");page.setProject(example);page.show();
         auto *main=page.findChild<QPushButton *>("mainAction");QVERIFY(main);QCOMPARE(main->text(),"一键启动");QCOMPARE(main->property("stateColor").toString(),"#2563EB");
         auto *frontend=page.findChild<QPushButton *>("open-frontend");auto *docs=page.findChild<QPushButton *>("open-docs");auto *feedback=page.findChild<QPushButton *>("feedback");
@@ -49,8 +49,8 @@ private slots:
         page.setState(ProjectState::Syncing);QCOMPARE(main->text(),"正在同步代码…");QVERIFY(!main->isEnabled());
         page.setState(ProjectState::Failed);QCOMPARE(main->text(),"一键启动");
         page.setActive(false);QVERIFY(!main->isDefault());page.setActive(true);QVERIFY(main->isDefault());
-        QVERIFY(docs->geometry().top()==frontend->geometry().top());QVERIFY(feedback->geometry().top()>docs->geometry().top());
-        page.resize(800,700);QTest::qWait(5);QVERIFY(docs->geometry().top()>frontend->geometry().top());
+        QCOMPARE(page.width(),1000);QTRY_COMPARE(docs->geometry().top(),frontend->geometry().top());QTRY_VERIFY(feedback->geometry().top()>docs->geometry().top());
+        page.setFixedSize(800,700);QCOMPARE(page.width(),800);QTRY_VERIFY(docs->geometry().top()>frontend->geometry().top());
         QVERIFY(main->height()>=main->fontMetrics().height()+12);
     }
     void commandModesExclusive(){

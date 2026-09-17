@@ -108,6 +108,10 @@ quint32 WindowsPortManager::parentPid(quint32 pid) const {
     return 0;
 }
 void WindowsPortManager::terminateTree(quint32 pid, const PortRequirement &port, const Cancellation &cancel) {
+    const auto rootImage = imagePath(pid, false);
+    if (protectedPid(pid, rootImage))
+        win::fail("拒绝终止受保护进程 PID=" + QString::number(pid) + " 映像=" + rootImage +
+            " 端口=" + port.protocol + ":" + port.address + ':' + QString::number(port.port), ERROR_ACCESS_DENIED);
     const auto processes = snapshot();
     QSet<quint32> visited;
     QList<quint32> ordered;
