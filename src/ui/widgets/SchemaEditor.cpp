@@ -4,6 +4,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QFontDatabase>
 #include <QHeaderView>
 #include <QJsonArray>
 #include <QLabel>
@@ -17,6 +18,7 @@
 #include <QVBoxLayout>
 #include <QUuid>
 #include <limits>
+#include <algorithm>
 
 namespace cst {
 QString fieldLabel(const QString &key) {
@@ -52,9 +54,9 @@ QString summary(const QJsonValue &value) {
     return value.toString();
 }
 std::optional<QJsonValue> editDialog(const QJsonObject &schema, const QJsonObject &rule, const QJsonValue &value, QWidget *parent) {
-    QDialog dialog(parent); dialog.setWindowTitle("编辑设置"); dialog.resize(680, 560);
-    auto *layout = new QVBoxLayout(&dialog); auto *scroll = new QScrollArea(&dialog); scroll->setWidgetResizable(true);
-    auto *editor = new SchemaEditor(schema, rule, value); scroll->setWidget(editor); layout->addWidget(scroll);
+    QDialog dialog(parent); dialog.setWindowTitle("编辑设置"); dialog.resize(760, 640);
+    auto *layout = new QVBoxLayout(&dialog); layout->setContentsMargins(24,24,24,24); layout->setSpacing(16); auto *scroll = new QScrollArea(&dialog); scroll->setWidgetResizable(true);
+    auto *editor = new SchemaEditor(schema, rule, value); editor->setContentsMargins(16,16,16,16); scroll->setWidget(editor); layout->addWidget(scroll);
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog); layout->addWidget(buttons);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -91,7 +93,8 @@ QJsonValue SchemaEditor::initialValue(const QJsonObject &root, QJsonObject rule)
 }
 void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
     rule = resolved(rule);
-    auto *layout = new QVBoxLayout(this); layout->setContentsMargins(0,0,0,0); layout->setSpacing(12);
+    auto *layout = new QVBoxLayout(this); layout->setContentsMargins(0,0,0,0); layout->setSpacing(8); layout->setAlignment(Qt::AlignTop);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     if (rule.contains("oneOf")) {
         auto *selector = new QComboBox(this); selector->setAccessibleName("探针类型");
         const auto alternatives = rule.value("oneOf").toArray(); int selected = 0;
@@ -122,23 +125,36 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
     }
     const auto type = rule.value("type").toString();
     if (type == "object" && rule.value("properties").toObject().isEmpty()) {
-        auto *table = new QTableWidget(this); table->setColumnCount(2); table->setHorizontalHeaderLabels({"变量名", "值"}); table->horizontalHeader()->setStretchLastSection(true);
+        auto *table = new QTableWidget(this); table->setMinimumHeight(144); table->setMaximumHeight(240); table->setColumnCount(2); table->setHorizontalHeaderLabels({"变量名", "值"}); table->horizontalHeader()->setStretchLastSection(true);
         const auto object = initial.toObject(); table->setRowCount(int(object.size())); int row = 0;
         for (auto it = object.begin(); it != object.end(); ++it, ++row) { table->setItem(row,0,new QTableWidgetItem(it.key())); table->setItem(row,1,new QTableWidgetItem(it.value().toString())); }
         layout->addWidget(table); auto *buttons = new QHBoxLayout; layout->addLayout(buttons);
-        auto *add = new QPushButton("添加变量",this); auto *remove = new QPushButton("删除变量",this); buttons->addWidget(add); buttons->addWidget(remove);
+        auto *add = new QPushButton("添加变量",this); auto *remove = new QPushButton("删除变量",this); buttons->addWidget(add); buttons->addWidget(remove); buttons->addStretch();
         connect(add,&QPushButton::clicked,this,[this,table] { const auto row = table->rowCount(); table->insertRow(row); table->setItem(row,0,new QTableWidgetItem("NEW_VARIABLE")); table->setItem(row,1,new QTableWidgetItem("")); emit changed(); });
         connect(remove,&QPushButton::clicked,this,[this,table] { table->removeRow(table->currentRow()); emit changed(); });
         connect(table,&QTableWidget::itemChanged,this,&SchemaEditor::changed);
         read_ = [table] { QJsonObject result; for(int i=0;i<table->rowCount();++i) if(table->item(i,0)) result[table->item(i,0)->text()] = table->item(i,1) ? table->item(i,1)->text() : QString{}; return result; }; return;
     }
     if (type == "object") {
-        auto *form = new QFormLayout; form->setVerticalSpacing(12); layout->addLayout(form);
+        auto *form = new QFormLayout; form->setVerticalSpacing(16); form->setHorizontalSpacing(20); form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow); form->setRowWrapPolicy(QFormLayout::WrapLongRows); form->setLabelAlignment(Qt::AlignLeft | Qt::AlignTop); layout->addLayout(form);
         auto editors = std::make_shared<QMap<QString, SchemaEditor *>>(); const auto properties = rule.value("properties").toObject();
-        for (auto it = properties.begin(); it != properties.end(); ++it) {
-            auto *editor = new SchemaEditor(schema_, it.value().toObject(), initial.toObject().value(it.key()), this);
-            editor->setAccessibleName(fieldLabel(it.key())); editor->setObjectName(it.key());
-            form->addRow(fieldLabel(it.key()), editor); editors->insert(it.key(),editor); connect(editor,&SchemaEditor::changed,this,&SchemaEditor::changed);
+        const QStringList preferredOrder{"id","name","description","order","mode","program","arguments","script","workingDirectory","repositoryUrl","branch","gitExecutable","credentialTarget","timeoutMs","successExitCodes","serviceCommand","prepareCommands","environment","inheritSystem","envFiles","variables","readiness","type","address","port","url","restartPolicy","shutdownGraceMs"};
+        auto keys = properties.keys();
+        std::stable_sort(keys.begin(), keys.end(), [&preferredOrder](const QString &a, const QString &b) {
+            const auto rank = [&preferredOrder](const QString &key) { const auto index = preferredOrder.indexOf(key); return index < 0 ? preferredOrder.size() : index; };
+            return rank(a) < rank(b);
+        });
+        for (const auto &key : keys) {
+            auto fieldRule = properties.value(key).toObject();
+            if (key == "script" || key == "description") fieldRule["uiMultiline"] = key;
+            auto *editor = new SchemaEditor(schema_, fieldRule, initial.toObject().value(key), this);
+            editor->setAccessibleName(fieldLabel(key)); editor->setObjectName(key);
+            const auto resolvedRule = resolved(fieldRule);
+            if (resolvedRule.value("type") == "object" || resolvedRule.contains("oneOf")) {
+                auto *heading = new QLabel(fieldLabel(key), this); auto font = heading->font(); font.setBold(true); heading->setFont(font);
+                form->addRow(heading); form->addRow(editor);
+            } else form->addRow(fieldLabel(key), editor);
+            editors->insert(key,editor); connect(editor,&SchemaEditor::changed,this,&SchemaEditor::changed);
         }
         auto applyMode = [editors,form] {
             if (!editors->contains("mode") || !editors->contains("program")) return;
@@ -156,11 +172,12 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
     }
     if (type == "array") {
         auto items = std::make_shared<QJsonArray>(initial.toArray());
-        auto *list = new QListWidget(this); list->setMinimumHeight(100); layout->addWidget(list);
+        auto *list = new QListWidget(this); list->setFixedHeight(112); layout->addWidget(list);
         const auto refresh = [list,items] { const auto row = list->currentRow(); list->clear(); for(const auto &item:*items) list->addItem(summary(item)); if(!items->isEmpty()) list->setCurrentRow(qBound(0,row,int(items->size())-1)); };
         refresh(); auto *buttons = new QHBoxLayout; layout->addLayout(buttons);
         auto *add = new QPushButton("添加",this); auto *edit = new QPushButton("编辑",this); auto *remove = new QPushButton("删除",this); auto *up = new QPushButton("上移",this); auto *down = new QPushButton("下移",this);
         for(auto *button:{add,edit,remove,up,down}) buttons->addWidget(button);
+        buttons->addStretch();
         const auto itemRule = rule.value("items").toObject();
         connect(add,&QPushButton::clicked,this,[this,items,itemRule,refresh] { if(auto value=editDialog(schema_,itemRule,initialValue(schema_,itemRule),this)) { items->append(*value); refresh(); emit changed(); } });
         const auto editItem = [this,list,items,itemRule,refresh] { const auto row=list->currentRow(); if(row<0)return; if(auto value=editDialog(schema_,itemRule,(*items)[row],this)) { (*items)[row]=*value; refresh(); emit changed(); } };
@@ -174,10 +191,19 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
         auto *box = new QCheckBox(this); box->setChecked(initial.toBool()); layout->addWidget(box); read_=[box]{return box->isChecked();}; connect(box,&QCheckBox::toggled,this,&SchemaEditor::changed); return;
     }
     if (type == "integer") {
-        auto *spin = new QSpinBox(this); spin->setRange(rule.value("minimum").toInt(std::numeric_limits<int>::min()),rule.value("maximum").toInt(std::numeric_limits<int>::max())); spin->setValue(initial.toInt());
+        auto *spin = new QSpinBox(this); spin->setMaximumWidth(220); spin->setRange(rule.value("minimum").toInt(std::numeric_limits<int>::min()),rule.value("maximum").toInt(std::numeric_limits<int>::max())); spin->setValue(initial.toInt());
         layout->addWidget(spin); read_=[spin]{return spin->value();}; connect(spin,&QSpinBox::valueChanged,this,&SchemaEditor::changed); return;
     }
-    auto *line = new QLineEdit(initial.toString(),this); if(rule.contains("maxLength")) line->setMaxLength(rule.value("maxLength").toInt());
+    if (rule.contains("uiMultiline")) {
+        auto *text = new QPlainTextEdit(initial.toString(), this);
+        const bool script = rule.value("uiMultiline") == "script";
+        text->setFixedHeight(script ? 180 : 104);
+        text->setPlaceholderText(script ? "输入要执行的脚本，可包含多行命令" : "简要说明项目的用途");
+        if (script) { text->setProperty("role", "code"); text->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont)); text->setLineWrapMode(QPlainTextEdit::NoWrap); }
+        layout->addWidget(text); read_ = [text] { return text->toPlainText(); };
+        connect(text, &QPlainTextEdit::textChanged, this, &SchemaEditor::changed); return;
+    }
+    auto *line = new QLineEdit(initial.toString(),this); line->setClearButtonEnabled(true); if(rule.contains("maxLength")) line->setMaxLength(rule.value("maxLength").toInt());
     layout->addWidget(line); read_=[line]{return line->text();}; connect(line,&QLineEdit::textChanged,this,&SchemaEditor::changed);
 }
 }

@@ -14,10 +14,10 @@ MainWindow::MainWindow(ProjectRuntimeService &runtime,UserPage *user,AdminPage *
     auto *central=new QWidget(this);setCentralWidget(central);auto *layout=new QVBoxLayout(central);layout->setContentsMargins(0,0,0,0);
     auto *header=new QHBoxLayout;header->setContentsMargins(24,12,24,12);layout->addLayout(header);
     auto *icon=new QLabel(central);icon->setPixmap(windowIcon().pixmap(28,28));header->addWidget(icon);
-    projectName_=new QLabel("CST",central);header->addWidget(projectName_,1);state_=new QLabel("■ 已停止",central);state_->setAccessibleName("项目状态");header->addWidget(state_);
+    projectName_=new QLabel("CST",central);projectName_->setProperty("role","heading");header->addWidget(projectName_,1);state_=new QLabel("■ 已停止",central);state_->setAccessibleName("项目状态");header->addWidget(state_);
     auto *group=new QButtonGroup(this);group->setExclusive(true);
     auto *userButton=new QPushButton("用户",central);auto *adminButton=new QPushButton("管理员",central);userButton->setObjectName("userNavigation");adminButton->setObjectName("adminNavigation");
-    for(auto *button:{userButton,adminButton}){button->setCheckable(true);button->setAutoDefault(false);button->setAccessibleName(button->text());button->setStyleSheet("QPushButton:checked { color: #2563EB; font-weight: bold; }");header->addWidget(button);group->addButton(button);}
+    for(auto *button:{userButton,adminButton}){button->setCheckable(true);button->setAutoDefault(false);button->setAccessibleName(button->text());header->addWidget(button);group->addButton(button);}
     pages_=new QStackedWidget(central);pages_->addWidget(user_);pages_->addWidget(admin_);layout->addWidget(pages_,1);userButton->setChecked(true);user_->setActive(true);
     connect(userButton,&QPushButton::clicked,this,[this]{pages_->setCurrentIndex(0);user_->setActive(true);});
     connect(adminButton,&QPushButton::clicked,this,[this]{pages_->setCurrentIndex(1);user_->setActive(false);});

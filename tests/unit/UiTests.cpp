@@ -1,4 +1,6 @@
 #include "ui/MainWindow.h"
+#include "ui/Theme.h"
+#include <QDir>
 #include "infrastructure/common/SystemClock.h"
 #include <QJsonArray>
 #include <QSignalSpy>
@@ -37,6 +39,7 @@ public:
 class UiTests final : public QObject {
     Q_OBJECT
 private slots:
+    void initTestCase(){applyTheme(*qobject_cast<QApplication *>(QCoreApplication::instance()));}
     void userActionsAndState(){
         Urls urls;UserPage page(urls);page.setFixedSize(1000,700);
         const auto example=readJson(CST_SOURCE_DIR "/config/cst-project.example.json");page.setProject(example);page.show();
@@ -59,7 +62,9 @@ private slots:
         SchemaEditor editor(schema,{{"$ref","#/$defs/command"}},command);editor.show();
         auto *mode=editor.findChild<SchemaEditor *>("mode")->findChild<QComboBox *>();QVERIFY(mode);
         QVERIFY(editor.value().toObject().contains("program"));QVERIFY(!editor.value().toObject().contains("script"));
-        mode->setCurrentText("shell");QVERIFY(editor.value().toObject().contains("script"));QVERIFY(!editor.value().toObject().contains("program"));QVERIFY(!editor.value().toObject().contains("arguments"));
+        mode->setCurrentText("shell");
+        auto *script=editor.findChild<SchemaEditor *>("script")->findChild<QPlainTextEdit *>();QVERIFY(script);
+        script->setPlainText("echo first\necho second");QCOMPARE(editor.value().toObject().value("script").toString(),QString("echo first\necho second"));QVERIFY(editor.value().toObject().contains("script"));QVERIFY(!editor.value().toObject().contains("program"));QVERIFY(!editor.value().toObject().contains("arguments"));
     }
     void navigationCancellationAndClose(){
         QTemporaryDir directory;const auto schema=readJson(CST_SOURCE_DIR "/config/cst-project.schema.json");
@@ -75,6 +80,15 @@ private slots:
         QVERIFY(!runtime.currentProject().isEmpty());auto *main=user->findChild<QPushButton *>("mainAction");
         auto *adminNavigation=window.findChild<QPushButton *>("adminNavigation");QTest::mouseClick(adminNavigation,Qt::LeftButton);QVERIFY(admin->isVisible());QVERIFY(!main->isDefault());
         QTest::mouseClick(window.findChild<QPushButton *>("userNavigation"),Qt::LeftButton);QVERIFY(user->isVisible());QVERIFY(main->isDefault());
+        const auto capture=qEnvironmentVariable("CST_UI_CAPTURE_DIR");
+        if(!capture.isEmpty()){
+            QDir().mkpath(capture);
+            QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/user.png"));
+            adminNavigation->click();
+            auto *navigation=admin->findChild<QListWidget *>("adminSidebar");QVERIFY(navigation);
+            for(int row=0;row<navigation->count();++row){navigation->setCurrentRow(row);QCoreApplication::processEvents();QVERIFY(window.grab().save(capture+"/admin-"+QString::number(row)+".png"));}
+            window.findChild<QPushButton *>("userNavigation")->click();
+        }
         runtime.start();QCOMPARE(main->text(),"一键停止");QCOMPARE(runtime.state(),ProjectState::Preflight);
         for(auto *editor:admin->findChildren<SchemaEditor *>())QVERIFY(!editor->isEnabled());
         QSignalSpy close(&runtime,&ProjectRuntimeService::closeReady);window.close();QVERIFY(window.isVisible());

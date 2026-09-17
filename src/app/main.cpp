@@ -5,6 +5,7 @@
 #include "infrastructure/windows/WindowsPlatform.h"
 #include "infrastructure/windows/WindowsSession.h"
 #include "ui/MainWindow.h"
+#include "ui/Theme.h"
 #include <QApplication>
 #include <QDir>
 #include <QJsonArray>
@@ -13,6 +14,7 @@
 
 int main(int argc,char **argv){
     QApplication application(argc,argv);
+    cst::applyTheme(application);
     application.setApplicationName("CST");application.setApplicationVersion("1.0.0");application.setOrganizationName("CST");
     try{
         cst::WindowsPrivilegeService privilege;privilege.requireElevationAndDebugPrivilege();
