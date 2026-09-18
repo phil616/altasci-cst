@@ -100,7 +100,7 @@ private slots:
     }
     void logLineFormatting(){
         const auto formatted=formatLogLine(R"({"ts":"2026-09-17T12:00:00.000Z","level":"error","channel":"stderr","event":"process.stderr","message":"boom"})");
-        QVERIFY(formatted.contains("boom"));QVERIFY(formatted.contains("ERROR"));QVERIFY(formatted.contains("[stderr]"));QVERIFY(!formatted.contains("\"message\""));
+        QVERIFY(formatted.contains("boom"));QVERIFY(formatted.contains("ERROR"));QVERIFY(formatted.contains("[stderr]"));QVERIFY(!formatted.contains("\"message\""));QVERIFY(formatLogLineHtml(formatted).contains("boom"));
         QCOMPARE(formatLogLine("plain text"),QString("plain text"));
         const auto colored=QStringLiteral("{\"ts\":\"2026-09-17T12:00:00.000Z\",\"level\":\"info\",\"message\":\"before \\u001b[31merror\\u001b[0m after\"}");
         QVERIFY(formatLogLine(colored).contains("error"));QVERIFY(!formatLogLine(colored).contains(QChar(0x1b)));QVERIFY(formatLogLineHtml(colored).contains("color:#dc2626"));

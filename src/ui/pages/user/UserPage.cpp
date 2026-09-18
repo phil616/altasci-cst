@@ -66,6 +66,7 @@ void UserPage::setState(ProjectState state) {
         {ProjectState::Failed,"运行失败 · 展开运行详情查看日志，修正配置后可重新启动。"}};
     statusHelp_->setText(hasProject_?guidance.value(state):"尚未选择项目 · 请先创建或导入项目配置。");
     if(configurationDirty_&&hasProject_&&(state==ProjectState::Stopped||state==ProjectState::Failed)){enabled=false;statusHelp_->setText("有未保存的管理配置 · 请先到“管理配置”保存，再启动项目。");}
+    if(state==ProjectState::Failed&&hasProject_){detailsToggle_->setChecked(true);details_->show();detailsToggle_->setArrowType(Qt::DownArrow);}
     main_->setText(text);main_->setEnabled(enabled);main_->setProperty("stateColor",color);main_->setProperty("projectState",stateName(state));
     main_->setStyleSheet("QPushButton { background-color: "+color+"; color: white; padding: 12px; } QPushButton:hover { background-color: "+QColor(color).lighter(108).name()+"; } QPushButton:disabled { background: #E2E8F0; color: #64748B; }");
     for(auto *button:buttons_)button->setEnabled(!button->property("requiresRunning").toBool()||state==ProjectState::Running);

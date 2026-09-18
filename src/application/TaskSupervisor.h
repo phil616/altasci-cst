@@ -27,6 +27,7 @@ private:
         std::shared_ptr<IManagedProcess> process;
         RestartBudget budget;
         QString state = "Stopped";
+        std::optional<qint64> startedAt;
         std::optional<qint64> restartAt;
         bool restarting = false;
     };
@@ -34,6 +35,7 @@ private:
     void prepare(Task &task, const QJsonObject &command, const Cancellation &cancel);
     void launch(Task &task, const Cancellation &cancel);
     void notify(Task &task, const QString &state);
+    void log(const QString &taskId, const QString &message);
     QJsonObject expand(const QJsonObject &object) const;
     IProcessRunner &runner_;
     IClock &clock_;

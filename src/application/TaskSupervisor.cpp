@@ -89,6 +89,9 @@ void TaskSupervisor::notify(Task &task, const QString &state) {
     task.state = state;
     if (taskChanged) taskChanged({task.configuration.value("id").toString(), task.configuration.value("name").toString(), state, task.budget.attempts()});
 }
+void TaskSupervisor::log(const QString &taskId, const QString &message) {
+    if (output) output(taskId, {"cst", message, false, QDateTime::currentDateTimeUtc()});
+}
 void TaskSupervisor::preflight(const QJsonObject &project, const Cancellation &cancel) {
     if (!empty()) taskError("有残留托管进程，不能启动");
     project_ = project;
@@ -117,6 +120,7 @@ void TaskSupervisor::preflight(const QJsonObject &project, const Cancellation &c
 void TaskSupervisor::prepare(Task &task, const QJsonObject &spec, const Cancellation &cancel) {
     notify(task, "Preparing");
     const auto processSpec = command(task.configuration, spec);
+    log(processSpec.taskId, "执行准备命令：" + spec.value("name").toString() + " | " + processSpec.program + ' ' + processSpec.arguments.join(' ') + " | 工作目录：" + processSpec.workingDirectory);
     preparing_ = runner_.start(processSpec, [this, id = processSpec.taskId](ProcessOutput line) { if (output) output(id, std::move(line)); });
     const auto deadline = clock_.monotonicMs() + spec.value("timeoutMs").toInt();
     while (preparing_->rootRunning()) {
@@ -133,7 +137,12 @@ void TaskSupervisor::launch(Task &task, const Cancellation &cancel) {
     cancel.check();
     notify(task, "Starting");
     const auto spec = command(task.configuration, task.configuration.value("serviceCommand").toObject());
+    const auto taskId = task.configuration.value("id").toString();
+    const auto commandText = spec.shellCommandLine.isEmpty() ? (spec.program + ' ' + spec.arguments.join(' ')) : (spec.program + ' ' + spec.shellCommandLine);
+    log(taskId, "启动服务命令：" + commandText + " | 工作目录：" + spec.workingDirectory);
+    task.startedAt = clock_.monotonicMs();
     task.process = runner_.start(spec, [this, id = spec.taskId](ProcessOutput line) { if (output) output(id, std::move(line)); });
+    log(taskId, "服务进程已创建，PID=" + QString::number(task.process->rootPid()));
     notify(task, "Running");
 }
 void TaskSupervisor::start(const QJsonObject &project, const QString &operationId, const Cancellation &cancel) {
@@ -142,8 +151,11 @@ void TaskSupervisor::start(const QJsonObject &project, const QString &operationI
     const auto configurations = project.value("tasks").toArray();
     for (const auto &value : configurations) {
         const auto task = value.toObject(); const auto policy = task.value("restartPolicy").toObject();
-        tasks_.push_back({task, {}, RestartBudget({policy.value("maxRestarts").toInt(), qint64(policy.value("windowSeconds").toInt()) * 1000,
-            policy.value("backoffSeconds").toInt(), policy.value("maxBackoffSeconds").toInt()}), "Stopped", {}, false});
+        Task initialized;
+        initialized.configuration = task;
+        initialized.budget = RestartBudget({policy.value("maxRestarts").toInt(), qint64(policy.value("windowSeconds").toInt()) * 1000,
+            policy.value("backoffSeconds").toInt(), policy.value("maxBackoffSeconds").toInt()});
+        tasks_.push_back(std::move(initialized));
     }
     std::sort(tasks_.begin(), tasks_.end(), [](const Task &a, const Task &b) { return a.configuration.value("order").toInt() < b.configuration.value("order").toInt(); });
     for (auto &task : tasks_) {
@@ -161,20 +173,40 @@ void TaskSupervisor::tick(const Cancellation &cancel) {
     if (stopping_) return;
     cancel.check();
     for (auto &task : tasks_) {
-        if (task.restarting || (task.state != "Running" && task.state != "Restarting")) continue;
-        if (!task.restartAt && (!task.process->rootRunning() || task.process->empty())) {
-            task.process->forceStop();
-            const auto delay = task.budget.schedule(clock_.monotonicMs());
-            if (!delay) { notify(task, "Failed"); taskError("服务重启次数超过滑动窗口限制：" + task.configuration.value("name").toString()); }
-            task.restartAt = clock_.monotonicMs() + *delay; notify(task, "Restarting");
-        }
-        if (task.restartAt && clock_.monotonicMs() >= *task.restartAt) {
+        if (task.restartAt) {
+            if (clock_.monotonicMs() < *task.restartAt) continue;
             task.restarting = true;
             try { launch(task, cancel); task.restartAt.reset(); task.restarting = false; }
             catch (...) { task.restarting = false; notify(task, "Failed"); throw; }
+            continue;
         }
+        if (task.restarting || (task.state != "Running" && task.state != "Restarting") || !task.process) continue;
+        if (task.process->rootRunning() && !task.process->empty()) continue;
+        const auto result = task.process->result();
+        const auto uptime = task.startedAt ? clock_.monotonicMs() - *task.startedAt : 0;
+        QString exitText = "退出状态未知";
+        if (result) exitText = result->crashed ? "异常退出代码 " + QString::number(result->exitCode) : "退出代码 " + QString::number(result->exitCode);
+        log(task.configuration.value("id").toString(), "服务进程" + exitText + "，运行 " + QString::number(uptime) + " ms");
+        task.process->forceStop();
+        if (uptime < 1500) {
+            const auto message = "服务命令启动后 " + QString::number(uptime) + " ms 内退出，已按启动失败处理。请查看运行日志中的命令输出：" + task.configuration.value("name").toString();
+            log(task.configuration.value("id").toString(), message);
+            notify(task, "Failed");
+            throw std::runtime_error(message.toUtf8().constData());
+        }
+        const auto delay = task.budget.schedule(clock_.monotonicMs());
+        if (!delay) {
+            const auto message = "服务重启次数超过滑动窗口限制，任务失败：" + task.configuration.value("name").toString();
+            log(task.configuration.value("id").toString(), message);
+            notify(task, "Failed");
+            throw std::runtime_error(message.toUtf8().constData());
+        }
+        task.restartAt = clock_.monotonicMs() + *delay;
+        notify(task, "Restarting");
+        log(task.configuration.value("id").toString(), "将在 " + QString::number(*delay / 1000) + " 秒后重启，累计重启次数 " + QString::number(task.budget.attempts()) + "/" + QString::number(task.configuration.value("restartPolicy").toObject().value("maxRestarts").toInt()));
     }
 }
+
 void TaskSupervisor::stop() {
     stopping_ = true;
     QStringList errors;

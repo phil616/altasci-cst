@@ -116,6 +116,7 @@ private slots:
         supervisor.start(project(endpoint.serverPort()), "operation", cancel);
         QCOMPARE(runner.events, QStringList({"start:first-prepare", "start:first-serve", "start:second-prepare", "start:second-serve"}));
         QCOMPARE(runner.workingDirectories, QStringList({"C:/project/prepare", "C:/project/service", "C:/project/prepare", "C:/project/service"}));
+        clock.now += 3000;
         runner.services[0]->alive = false;
         supervisor.tick(cancel); clock.now += 1000; supervisor.tick(cancel);
         QCOMPARE(runner.events.last(), "start:first-serve");
@@ -124,6 +125,17 @@ private slots:
         supervisor.stop();
         QCOMPARE(runner.events.mid(runner.events.size() - 2), QStringList({"stop:second-serve", "stop:first-serve"}));
         QVERIFY(supervisor.empty());
+    }
+    void rapidStartupFailureStopsWithoutRestart() {
+        TestRunner runner; TestClock clock; Cancellation cancel;
+        TaskSupervisor supervisor(runner, clock, {});
+        supervisor.start(project(0), "operation", cancel);
+        QCOMPARE(runner.events.size(), 4);
+        runner.services[0]->alive = false;
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, supervisor.tick(cancel));
+        QCOMPARE(runner.events.size(), 4);
+        QCOMPARE(runner.events.count("start:first-serve"), 1);
+        supervisor.stop();
     }
     void failureShortCircuitAndCleanup() {
         QTcpServer endpoint; QVERIFY(endpoint.listen(QHostAddress::LocalHost));
