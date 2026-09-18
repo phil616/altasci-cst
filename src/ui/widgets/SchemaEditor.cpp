@@ -37,13 +37,13 @@ QString fieldLabel(const QString &key) {
     static const QMap<QString, QString> labels{
         {"id", "标识"}, {"name", "名称"}, {"description", "说明"}, {"order", "顺序"}, {"workingDirectory", "工作目录"},
         {"environment", "环境变量"}, {"prepareCommands", "准备命令"}, {"serviceCommand", "长期服务命令"},
-        {"readiness", "就绪检查"}, {"restartPolicy", "重启策略"}, {"shutdownGraceMs", "停止宽限期（毫秒）"},
+        {"restartPolicy", "重启策略"}, {"shutdownGraceMs", "停止宽限期（毫秒）"},
         {"mode", "模式"}, {"program", "程序"}, {"arguments", "参数"}, {"script", "脚本"}, {"timeoutMs", "超时（毫秒）"},
         {"successExitCodes", "成功退出码"}, {"inheritSystem", "继承系统环境"}, {"envFiles", "环境文件"}, {"variables", "变量"},
         {"type", "类型"}, {"address", "地址"}, {"port", "端口"}, {"protocol", "协议"}, {"ownerTaskId", "所属任务"},
         {"url", "URL"}, {"expectedStatusCodes", "预期 HTTP 状态码"}, {"requestTimeoutMs", "请求超时（毫秒）"},
         {"connectTimeoutMs", "连接超时（毫秒）"}, {"pollIntervalMs", "检测间隔（毫秒）"}, {"successThreshold", "连续成功次数"},
-        {"probes", "探针"}, {"maxRestarts", "最多重启次数"}, {"windowSeconds", "统计窗口（秒）"}, {"backoffSeconds", "初始退避（秒）"},
+        {"maxRestarts", "最多重启次数"}, {"windowSeconds", "统计窗口（秒）"}, {"backoffSeconds", "初始退避（秒）"},
         {"maxBackoffSeconds", "最大退避（秒）"}, {"label", "按钮文字"}, {"availableWhen", "可用条件"},
         {"repositoryUrl", "HTTPS 仓库地址"}, {"branch", "分支"}, {"gitExecutable", "Git 可执行文件"},
         {"credentialTarget", "凭据名称"}, {"toolDirectories", "工具查找目录"}, {"portReclaimTimeoutMs", "端口释放超时（毫秒）"},
@@ -75,7 +75,6 @@ QString fieldHelp(const QString &key) {
         {"availableWhen","running 表示项目运行后可用；always 表示始终可用。"},
         {"url","点击后由默认浏览器打开此地址。"},
         {"successExitCodes","命令返回这些退出码时视为成功。"},
-        {"probes","所有探针通过后，任务才会被视为就绪。"},
         {"maxRestarts","统计窗口内允许的自动重启次数。"},
         {"shutdownGraceMs","先请求正常退出，超过此时间后终止进程树。"}
     };
@@ -141,7 +140,7 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
     auto *layout = new QVBoxLayout(this); layout->setContentsMargins(0,0,0,0); layout->setSpacing(8); layout->setAlignment(Qt::AlignTop);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
     if (rule.contains("oneOf")) {
-        auto *selector = new QComboBox(this); selector->setAccessibleName("探针类型");
+        auto *selector = new QComboBox(this); selector->setAccessibleName("类型选择");
         const auto alternatives = rule.value("oneOf").toArray(); int selected = 0;
         for (qsizetype i = 0; i < alternatives.size(); ++i) {
             const auto branch = resolved(alternatives[i].toObject());
@@ -169,14 +168,13 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
         const auto value = rule.value("const"); layout->addWidget(new QLabel(summary(value), this)); read_ = [value] { return value; }; return;
     }
     const auto type = rule.value("type").toString();
-    if (type == "object" && rule.value("properties").toObject().contains("serviceCommand") && rule.value("properties").toObject().contains("readiness")) {
+    if (type == "object" && rule.value("properties").toObject().contains("serviceCommand") && rule.value("properties").toObject().contains("prepareCommands") && rule.value("properties").toObject().contains("restartPolicy") && rule.value("properties").toObject().contains("shutdownGraceMs")) {
         auto *tabs=new QTabWidget(this);tabs->setObjectName("taskEditorTabs");tabs->setMinimumHeight(360);layout->addWidget(tabs);
         const auto properties=rule.value("properties").toObject();
         const QList<QPair<QString,QStringList>> groups{
             {"基本信息",{"id","name","order","workingDirectory"}},
             {"命令",{"serviceCommand","prepareCommands"}},
             {"环境",{"environment"}},
-            {"健康检查",{"readiness"}},
             {"重启与停止",{"restartPolicy","shutdownGraceMs"}}};
         auto editors=std::make_shared<QList<SchemaEditor *>>();
         for(const auto &group:groups){
@@ -201,7 +199,7 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
     if (type == "object") {
         auto *form = new QFormLayout; form->setVerticalSpacing(16); form->setHorizontalSpacing(20); form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow); form->setRowWrapPolicy(QFormLayout::WrapLongRows); form->setLabelAlignment(Qt::AlignLeft | Qt::AlignTop); layout->addLayout(form);
         auto editors = std::make_shared<QMap<QString, SchemaEditor *>>(); const auto properties = rule.value("properties").toObject();
-        const QStringList preferredOrder{"id","name","description","order","mode","workingDirectory","program","arguments","script","repositoryUrl","branch","gitExecutable","credentialTarget","timeoutMs","successExitCodes","serviceCommand","prepareCommands","environment","inheritSystem","envFiles","variables","readiness","type","address","port","url","restartPolicy","shutdownGraceMs"};
+        const QStringList preferredOrder{"id","name","description","order","mode","workingDirectory","program","arguments","script","repositoryUrl","branch","gitExecutable","credentialTarget","timeoutMs","successExitCodes","serviceCommand","prepareCommands","environment","inheritSystem","envFiles","variables","type","address","port","url","restartPolicy","shutdownGraceMs"};
         auto keys = properties.keys();
         std::stable_sort(keys.begin(), keys.end(), [&preferredOrder](const QString &a, const QString &b) {
             const auto rank = [&preferredOrder](const QString &key) { const auto index = preferredOrder.indexOf(key); return index < 0 ? preferredOrder.size() : index; };

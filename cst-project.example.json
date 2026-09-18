@@ -80,27 +80,6 @@
           ],
           "workingDirectory": "{{PROJECT_DIR}}\\backend"
         },
-        "readiness": {
-          "timeoutMs": 120000,
-          "pollIntervalMs": 500,
-          "successThreshold": 2,
-          "probes": [
-            {
-              "type": "tcp",
-              "address": "127.0.0.1",
-              "port": 8000,
-              "connectTimeoutMs": 1000
-            },
-            {
-              "type": "http",
-              "url": "http://127.0.0.1:8000/health",
-              "expectedStatusCodes": [
-                200
-              ],
-              "requestTimeoutMs": 2000
-            }
-          ]
-        },
         "restartPolicy": {
           "mode": "on_failure",
           "maxRestarts": 5,
@@ -146,27 +125,6 @@
             0
           ],
           "workingDirectory": "{{PROJECT_DIR}}\\frontend"
-        },
-        "readiness": {
-          "timeoutMs": 120000,
-          "pollIntervalMs": 500,
-          "successThreshold": 2,
-          "probes": [
-            {
-              "type": "tcp",
-              "address": "127.0.0.1",
-              "port": 5173,
-              "connectTimeoutMs": 1000
-            },
-            {
-              "type": "http",
-              "url": "http://127.0.0.1:5173/",
-              "expectedStatusCodes": [
-                200
-              ],
-              "requestTimeoutMs": 2000
-            }
-          ]
         },
         "restartPolicy": {
           "mode": "on_failure",

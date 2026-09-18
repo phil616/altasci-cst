@@ -1,4 +1,5 @@
 #include "application/OperationQueue.h"
+#include "application/PortReclaimService.h"
 #include "application/TaskSupervisor.h"
 #include "application/SourceSyncService.h"
 #include "application/ProjectConfigService.h"
@@ -90,12 +91,11 @@ public:
     QString resolveExecutable(const QString &program, const QStringList &) const override { return program; }
     Environment inheritedEnvironment() const override { return {}; }
 };
-QJsonObject task(const QString &id, int order, quint16 port) {
+QJsonObject task(const QString &id, int order, quint16) {
     return {{"id", id}, {"name", id}, {"order", order},
         {"environment", QJsonObject{{"inheritSystem", false}, {"envFiles", QJsonArray{}}, {"variables", QJsonObject{}}}},
         {"prepareCommands", QJsonArray{QJsonObject{{"id", id + "-prepare"}, {"name", id + "-prepare"}, {"mode", "exec"}, {"program", id + "-prepare"}, {"arguments", QJsonArray{}}, {"workingDirectory", "C:/project/prepare"}, {"timeoutMs", 1000}, {"successExitCodes", QJsonArray{0}}}}},
         {"serviceCommand", QJsonObject{{"id", id + "-serve"}, {"mode", "exec"}, {"program", id + "-serve"}, {"arguments", QJsonArray{}}, {"workingDirectory", "C:/project/service"}, {"timeoutMs", 0}, {"successExitCodes", QJsonArray{0}}}},
-        {"readiness", QJsonObject{{"timeoutMs", 1000}, {"pollIntervalMs", 100}, {"successThreshold", 2}, {"probes", QJsonArray{QJsonObject{{"type", "tcp"}, {"address", "127.0.0.1"}, {"port", port}, {"connectTimeoutMs", 100}}}}}},
         {"restartPolicy", QJsonObject{{"maxRestarts", 5}, {"windowSeconds", 600}, {"backoffSeconds", 1}, {"maxBackoffSeconds", 30}}}, {"shutdownGraceMs", 0}};
 }
 QJsonObject project(quint16 port) {
@@ -109,9 +109,8 @@ class ServiceTests final : public QObject {
 private slots:
     void executionOrderAndRestart() {
         QTcpServer endpoint; QVERIFY(endpoint.listen(QHostAddress::LocalHost));
-        TestRunner runner; TestPorts ports; TestClock clock; Cancellation cancel;
-        ReadinessService readiness(clock); PortReclaimService reclaim(ports, clock);
-        TaskSupervisor supervisor(runner, readiness, reclaim, clock, {"C:/app", "C:/data", "C:/Windows"});
+        TestRunner runner; TestClock clock; Cancellation cancel;
+        TaskSupervisor supervisor(runner, clock, {"C:/app", "C:/data", "C:/Windows"});
         supervisor.start(project(endpoint.serverPort()), "operation", cancel);
         QCOMPARE(runner.events, QStringList({"start:first-prepare", "start:first-serve", "start:second-prepare", "start:second-serve"}));
         QCOMPARE(runner.workingDirectories, QStringList({"C:/project/prepare", "C:/project/service", "C:/project/prepare", "C:/project/service"}));
@@ -127,8 +126,8 @@ private slots:
     void failureShortCircuitAndCleanup() {
         QTcpServer endpoint; QVERIFY(endpoint.listen(QHostAddress::LocalHost));
         TestRunner runner; runner.failCommand = "second-prepare";
-        TestPorts ports; TestClock clock; Cancellation cancel; ReadinessService readiness(clock); PortReclaimService reclaim(ports, clock);
-        TaskSupervisor supervisor(runner, readiness, reclaim, clock, {});
+        TestClock clock; Cancellation cancel;
+        TaskSupervisor supervisor(runner, clock, {});
         QVERIFY_THROWS_EXCEPTION(std::runtime_error, supervisor.start(project(endpoint.serverPort()), "operation", cancel));
         QVERIFY(!runner.events.contains("start:second-serve"));
         supervisor.stop(); QVERIFY(supervisor.empty()); QCOMPARE(runner.events.last(), "stop:first-serve");

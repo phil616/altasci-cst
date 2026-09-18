@@ -1,7 +1,5 @@
 #pragma once
 #include "Platform.h"
-#include "PortReclaimService.h"
-#include "ReadinessService.h"
 #include "domain/Configuration.h"
 #include <vector>
 
@@ -14,8 +12,7 @@ struct TaskStatus {
 };
 class TaskSupervisor {
 public:
-    TaskSupervisor(IProcessRunner &runner, ReadinessService &readiness, PortReclaimService &ports,
-                   IClock &clock, ProjectPaths paths);
+    TaskSupervisor(IProcessRunner &runner, IClock &clock, ProjectPaths paths);
     void preflight(const QJsonObject &project, const Cancellation &cancel);
     void start(const QJsonObject &project, const QString &operationId, const Cancellation &cancel);
     void tick(const Cancellation &cancel);
@@ -39,8 +36,6 @@ private:
     void notify(Task &task, const QString &state);
     QJsonObject expand(const QJsonObject &object) const;
     IProcessRunner &runner_;
-    ReadinessService &readiness_;
-    PortReclaimService &ports_;
     IClock &clock_;
     ProjectPaths paths_;
     QJsonObject project_;

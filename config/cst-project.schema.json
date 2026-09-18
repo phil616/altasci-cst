@@ -220,94 +220,6 @@
         }
       }
     },
-    "tcpProbe": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [],
-      "properties": {
-        "type": {
-          "const": "tcp"
-        },
-        "address": {
-          "type": "string",
-          "maxLength": 255
-        },
-        "port": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 65535
-        },
-        "connectTimeoutMs": {
-          "type": "integer",
-          "minimum": 100,
-          "maximum": 30000
-        }
-      }
-    },
-    "httpProbe": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [],
-      "properties": {
-        "type": {
-          "const": "http"
-        },
-        "url": {
-          "type": "string",
-          "maxLength": 2048
-        },
-        "expectedStatusCodes": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "type": "integer",
-            "minimum": 100,
-            "maximum": 599
-          }
-        },
-        "requestTimeoutMs": {
-          "type": "integer",
-          "minimum": 100,
-          "maximum": 30000
-        }
-      }
-    },
-    "readiness": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [],
-      "properties": {
-        "timeoutMs": {
-          "type": "integer",
-          "minimum": 1000,
-          "maximum": 600000
-        },
-        "pollIntervalMs": {
-          "type": "integer",
-          "minimum": 100,
-          "maximum": 5000
-        },
-        "successThreshold": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 10
-        },
-        "probes": {
-          "type": "array",
-          "maxItems": 16,
-          "items": {
-            "oneOf": [
-              {
-                "$ref": "#/$defs/tcpProbe"
-              },
-              {
-                "$ref": "#/$defs/httpProbe"
-              }
-            ]
-          }
-        }
-      }
-    },
     "restartPolicy": {
       "type": "object",
       "additionalProperties": false,
@@ -368,9 +280,6 @@
         },
         "serviceCommand": {
           "$ref": "#/$defs/command"
-        },
-        "readiness": {
-          "$ref": "#/$defs/readiness"
         },
         "restartPolicy": {
           "$ref": "#/$defs/restartPolicy"

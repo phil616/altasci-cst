@@ -20,7 +20,6 @@ target_compile_definitions(cst-unit-domain PRIVATE CST_SOURCE_DIR="${CMAKE_CURRE
 add_test(NAME domain COMMAND cst-unit-domain)
 add_library(cst_application STATIC
   ../src/application/ProjectConfigService.cpp
-  ../src/application/ReadinessService.cpp
   ../src/application/PortReclaimService.cpp
   ../src/application/SourceSyncService.cpp
   ../src/application/TaskSupervisor.cpp

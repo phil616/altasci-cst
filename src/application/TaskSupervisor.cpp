@@ -13,9 +13,8 @@ Environment environmentValues(const QJsonObject &object) {
 }
 [[noreturn]] void taskError(const QString &message) { throw std::runtime_error(message.toUtf8().constData()); }
 }
-TaskSupervisor::TaskSupervisor(IProcessRunner &runner, ReadinessService &readiness, PortReclaimService &ports,
-                               IClock &clock, ProjectPaths paths)
-    : runner_(runner), readiness_(readiness), ports_(ports), clock_(clock), paths_(std::move(paths)) {}
+TaskSupervisor::TaskSupervisor(IProcessRunner &runner, IClock &clock, ProjectPaths paths)
+    : runner_(runner), clock_(clock), paths_(std::move(paths)) {}
 QJsonObject TaskSupervisor::expand(const QJsonObject &object) const {
     const auto id = project_.value("id").toString();
     const QMap<QString, QString> values{{"PROJECT_DIR", project_.value("source").toObject().value("workingDirectory").toString()},
@@ -103,20 +102,11 @@ void TaskSupervisor::prepare(Task &task, const QJsonObject &spec, const Cancella
     if (!result || result->crashed || !spec.value("successExitCodes").toArray().contains(double(result->exitCode))) taskError("准备命令失败：" + spec.value("name").toString());
 }
 void TaskSupervisor::launch(Task &task, const Cancellation &cancel) {
-    const auto allPorts = PortReclaimService::requirements(project_.value("requiredPorts").toArray());
-    const auto settings = project_.value("settings").toObject();
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        cancel.check(); notify(task, "Starting");
-        const auto spec = command(task.configuration, task.configuration.value("serviceCommand").toObject());
-        task.process = runner_.start(spec, [this, id = spec.taskId](ProcessOutput line) { if (output) output(id, std::move(line)); });
-        readiness_.wait(expand(task.configuration.value("readiness").toObject()), *task.process, cancel, [this, &cancel] { tick(cancel); });
-        if (ports_.ownedBy(allPorts, task.configuration.value("id").toString(), *task.process)) { notify(task, "Running"); return; }
-        task.process->stop(task.configuration.value("shutdownGraceMs").toInt());
-        if (attempt == 1) taskError("服务端口再次被外部进程抢占：" + task.configuration.value("name").toString());
-        QList<PortRequirement> owned;
-        for (const auto &port : allPorts) if (port.ownerTaskId == task.configuration.value("id").toString()) owned.append(port);
-        ports_.reclaim(owned, settings.value("portReclaimTimeoutMs").toInt(), settings.value("maxAncestorEscalation").toInt(), {task.process}, cancel);
-    }
+    cancel.check();
+    notify(task, "Starting");
+    const auto spec = command(task.configuration, task.configuration.value("serviceCommand").toObject());
+    task.process = runner_.start(spec, [this, id = spec.taskId](ProcessOutput line) { if (output) output(id, std::move(line)); });
+    notify(task, "Running");
 }
 void TaskSupervisor::start(const QJsonObject &project, const QString &operationId, const Cancellation &cancel) {
     if (!empty()) taskError("有残留托管进程，不能启动");

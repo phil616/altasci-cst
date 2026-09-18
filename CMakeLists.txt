@@ -44,7 +44,7 @@ target_include_directories(cst_domain PUBLIC src)
 target_link_libraries(cst_domain PUBLIC Qt6::Core Qt6::Network)
 cst_owned(cst_domain)
 add_library(cst_application STATIC
-  src/application/ProjectConfigService.cpp src/application/ReadinessService.cpp
+  src/application/ProjectConfigService.cpp
   src/application/PortReclaimService.cpp src/application/SourceSyncService.cpp
   src/application/TaskSupervisor.cpp src/application/OperationQueue.cpp
   src/application/ProjectRuntimeService.cpp src/application/LogService.cpp

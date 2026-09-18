@@ -91,7 +91,7 @@ private slots:
         const auto schema=readJson(CST_SOURCE_DIR "/config/cst-project.schema.json");
         const auto task=readJson(CST_SOURCE_DIR "/config/cst-project.example.json").value("project").toObject().value("tasks").toArray().first().toObject();
         SchemaEditor editor(schema,{{"$ref","#/$defs/task"}},task);editor.resize(650,500);editor.show();
-        auto *tabs=editor.findChild<QTabWidget *>("taskEditorTabs");QVERIFY(tabs);QCOMPARE(tabs->count(),5);
+        auto *tabs=editor.findChild<QTabWidget *>("taskEditorTabs");QVERIFY(tabs);QCOMPARE(tabs->count(),4);
         QCOMPARE(editor.value().toObject(),task);
         for(int index=0;index<tabs->count();++index){tabs->setCurrentIndex(index);QCoreApplication::processEvents();QCOMPARE(editor.value().toObject(),task);}
         auto *name=editor.findChild<SchemaEditor *>("name")->findChild<QLineEdit *>();QVERIFY(name);name->setText("修改任务名称");
@@ -109,7 +109,7 @@ private slots:
         ProjectConfigService configuration(ConfigurationValidator(schema,paths));ProjectCatalogService catalog(directory.path(),configuration);
         const auto example=readJson(CST_SOURCE_DIR "/config/cst-project.example.json");catalog.importProject(example);
         Runner runner;Ports ports;Files files;Credentials credentials;SystemClock clock;QMutex mutex;
-        ReadinessService readiness(clock);PortReclaimService reclaim(ports,clock);TaskSupervisor supervisor(runner,readiness,reclaim,clock,paths);
+        PortReclaimService reclaim(ports,clock);TaskSupervisor supervisor(runner,clock,paths);
         SourceSyncService sync(runner,files,clock,directory.path(),"askpass",mutex);LogService logs(directory.path());DiagnosticExportService diagnostics(runner,ports,clock,logs,directory.path());
         ProjectRuntimeService runtime(configuration,catalog,supervisor,reclaim,sync);Urls urls;
         auto *user=new UserPage(urls);auto *admin=new AdminPage(runtime,configuration,catalog,credentials,ports,sync,diagnostics,logs,schema,paths);

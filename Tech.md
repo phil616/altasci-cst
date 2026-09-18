@@ -172,20 +172,13 @@ Project
 1. 顺序执行 `prepareCommands`；只有进程正常退出且 exit code 位于 `successExitCodes` 才成功；
 2. 任一准备命令失败、崩溃或超时，终止当前命令，停止此前已经启动的服务（任务逆序），项目进入 `Failed`；
 3. 启动唯一的 `serviceCommand`；
-4. “进程创建成功”不代表任务运行成功；必须在 `readiness.timeoutMs` 内通过全部探针；
-5. 每个探针必须连续成功 `successThreshold` 次；任一轮失败会把连续计数清零；
-6. 服务进程在就绪前退出或探针超时，任务失败；
-7. 当前任务进入 `Running` 后才启动下一个任务；
-8. 所有任务进入 `Running` 后项目才进入 `Running`。
+4. 服务进程创建成功即视为任务进入 `Running`，不等待端口或就绪探针；
+5. 当前任务进入 `Running` 后才启动下一个任务；
+6. 所有任务进入 `Running` 后项目才进入 `Running`。
 
 长期服务一旦进入 `Running`，任何非用户停止导致的退出都属于意外退出，无论 exit code 是否为 0；`successExitCodes` 对长期服务只用于日志展示，不改变重启判定。
 
-探针仅有两类：
-
-- `tcp`：建立 TCP 连接成功；
-- `http`：GET 请求在单次 `requestTimeoutMs` 内完成，HTTP 状态码属于 `expectedStatusCodes`。
-
-`udp` 端口没有通用就绪语义，只参与端口占用检查，不作为 readiness probe。
+不设就绪探针机制，也不要求长期服务绑定端口。`requiredPorts` 只用于启动前端口占用检查和强制释放。
 
 ### 4.3 长期托管与自动重启
 
@@ -195,7 +188,6 @@ Project
 2. 只重启 `serviceCommand`，不重新执行准备命令；
 3. 退避时间依次为 1、2、4、8、15、30 秒，之后保持 30 秒；
 4. 在滑动 10 分钟窗口内最多允许 5 次重启；
-5. 每次重启都必须重新通过 readiness；
 6. 达到限制或重启失败时，该任务进入 `Failed`，随后停止其他任务（逆序），项目进入 `Failed`；
 7. 用户手动停止、关闭 CST 或开始退出时不触发自动重启。
 
@@ -273,9 +265,9 @@ TCP 只把 `LISTEN` 行视为占用；UDP 的绑定行视为占用。`0.0.0.0`/`
 
 这里没有“询问是否杀进程”的确认框。启动项目即代表授权 CST 释放配置中的所有端口。
 
-### 6.3 启动后的所有权验证
+### 6.3 启动后的端口验证
 
-每个任务就绪时，重新枚举其 `ownerTaskId` 对应端口，并用 `QueryInformationJobObject(JobObjectBasicProcessIdList)` 验证监听 PID 属于该任务 Job。若端口再次被外部进程抢占，先停止当前任务，重新执行一次端口强制释放并重启；第二次仍不属于该 Job 则项目失败。
+长期服务不再等待端口或运行额外探测。`requiredPorts` 只用于启动前的端口占用检查和强制释放，不再通过就绪机制决定任务是否运行成功。
 
 ## 7. Git 代码同步：远程仓绝对权威
 
@@ -401,13 +393,11 @@ JSON Schema 之外还必须检查：
 - 项目、任务、命令、动作 ID 全局规则及各自集合唯一；
 - task `order` 唯一；action `order` 唯一；
 - 每个 `ownerTaskId` 必须存在；
-- 每个 readiness TCP 端口必须出现在 `requiredPorts` 且 owner 一致；
 - `serviceCommand.timeoutMs` 必须为 0；准备命令 timeout 必须大于 0；
 - `exec` 的 program 不能是 `.cmd` 或 `.bat`；
 - URL 只允许 `http`、`https`，必须是绝对 URL；
 - Git URL 只允许 HTTPS 且不含用户名、密码、查询串或 fragment；
 - 命令级工作目录、env 文件和 Git 可执行文件路径必须符合 Windows 绝对路径规则；
-- task 至少有一个 readiness probe；
 - 端口号与 protocol/address 组合唯一。
 
 ## 9. 桌面 UX 规范
@@ -444,11 +434,11 @@ JSON Schema 之外还必须检查：
 | `Stopping` | 正在停止… | 琥珀色 | 不可用 |
 | `Syncing` | 正在同步代码… | 琥珀色 | 不可用 |
 
-用户点击“一键启动”后，按钮必须在同一轮 UI 事件中立即变为红色“一键停止”，不得等到全部服务就绪后再改变。检查、释放端口和顺序启动期间，按钮始终可以取消本次启动。
+用户点击“一键启动”后，按钮必须在同一轮 UI 事件中立即变为红色“一键停止”，不得等到全部服务启动完成后再改变。检查、释放端口和顺序启动期间，按钮始终可以取消本次启动。
 
 动态动作由 `userActions` 运行时创建 `QPushButton`，按 `order` 排序放入两列 `QGridLayout`，窗口窄于 900 px 时变为一列。按钮使用系统默认浏览器调用 `QDesktopServices::openUrl`；`availableWhen=running` 的按钮只在项目 `Running` 时启用。打开失败必须显示错误，不改变项目状态。
 
-“运行详情”显示任务列表、就绪状态、重启次数和最近 5000 行日志；默认折叠，避免干扰普通用户。
+“运行详情”显示任务列表、任务状态、重启次数和最近 5000 行日志；默认折叠，避免干扰普通用户。
 
 ### 9.3 管理员页
 
@@ -508,7 +498,6 @@ class ProjectCatalogService;
 class ProjectConfigService;
 class ProjectRuntimeService;
 class TaskSupervisor;
-class ReadinessService;
 class PortReclaimService;
 class SourceSyncService;
 class DiagnosticExportService;
@@ -670,7 +659,7 @@ Git 集成测试使用本地 bare repository，不依赖公网：创建两个提
 
 - [ ] Windows 10 1809+ 与 Windows 11 x64 可启动；非提升状态严格拒绝；
 - [ ] 可以创建、编辑、校验、导入、导出、切换并设定默认项目；
-- [ ] 准备命令严格顺序执行，长期服务由 readiness 而非 PID 启动判定；
+- [ ] 准备命令严格顺序执行，长期服务进程创建成功即进入 Running；
 - [ ] 多个任务严格按 order 启动、逆序停止；
 - [ ] 服务崩溃按规定重启，超限后整体失败并清理；
 - [ ] 端口占用者被强制清理，重生者触发上游升级，无法清理时禁止启动；

@@ -27,7 +27,7 @@ int main(int argc,char **argv){
         cst::WindowsCredentialStore credentials;cst::WindowsPortManager ports;cst::WindowsFileTransaction files;cst::SystemClock clock;
         const auto install=QCoreApplication::applicationDirPath();
         cst::WindowsProcessRunner runner(install+"/cst-signal-helper.exe");
-        cst::ReadinessService readiness(clock);cst::PortReclaimService reclaim(ports,clock);cst::TaskSupervisor supervisor(runner,readiness,reclaim,clock,paths);
+        cst::PortReclaimService reclaim(ports,clock);cst::TaskSupervisor supervisor(runner,clock,paths);
         QMutex operationMutex;cst::SourceSyncService sync(runner,files,clock,paths.storageDirectory,install+"/cst-git-askpass.exe",operationMutex);
         cst::LogService logs(paths.storageDirectory);cst::DiagnosticExportService diagnostics(runner,ports,clock,logs,paths.storageDirectory);
         cst::ProjectRuntimeService runtime(configuration,catalog,supervisor,reclaim,sync);

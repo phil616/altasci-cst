@@ -401,30 +401,6 @@ ValidationIssues ConfigurationValidator::validate(const QJsonObject &document) c
                 if (nonEmpty(script)) expanded(script, cp + "script");
             }
         }
-        const auto probes = task.value("readiness").toObject().value("probes").toArray();
-        for (const auto &probeValue : probes) {
-            const auto probe = probeValue.toObject();
-            const auto type = probe.value("type").toString();
-            if (type == "http") {
-                const auto url = probe.value("url").toString().trimmed();
-                if (nonEmpty(url)) {
-                    const auto expandedUrl = expanded(url, path + "readiness/probes/url");
-                    if (nonEmpty(expandedUrl) && !isAllowedUrl(expandedUrl)) fail(path + "readiness/probes", "HTTP 探针 URL 无效");
-                }
-            } else if (type == "tcp") {
-                const auto address = probe.value("address").toString().trimmed();
-                const auto port = probe.value("port").toInt();
-                if (nonEmpty(address) && port > 0) {
-                    bool found = false;
-                    for (const auto &portValue : ports) {
-                        const auto required = portValue.toObject();
-                        if (required.value("protocol") == "tcp" && required.value("port") == port &&
-                            required.value("ownerTaskId") == id && addressesConflict(required.value("address").toString(), address)) found = true;
-                    }
-                    if (!found) fail(path + "readiness/probes", "TCP 探针必须匹配归属当前任务的 requiredPorts");
-                }
-            }
-        }
     }
 
     QSet<QString> portKeys;
@@ -511,29 +487,6 @@ ValidationIssues ConfigurationValidator::validateForRun(const QJsonObject &docum
                 if (command.value("successExitCodes").toArray().isEmpty()) fail(cp + "successExitCodes", "至少配置一个成功退出码");
             } else {
                 fail(cp + "mode", "必须选择 exec 或 shell");
-            }
-        }
-        const auto readiness = task.value("readiness").toObject();
-        if (readiness.isEmpty()) {
-            fail(path + "readiness", "必须配置就绪检查");
-        } else {
-            const auto probes = readiness.value("probes").toArray();
-            if (probes.isEmpty()) fail(path + "readiness/probes", "至少配置一个就绪探针");
-            for (qsizetype j = 0; j < probes.size(); ++j) {
-                const auto probe = probes[j].toObject();
-                const auto pp = path + "readiness/probes/" + QString::number(j) + '/';
-                const auto type = probe.value("type").toString();
-                if (type == "tcp") {
-                    if (!nonEmpty(probe.value("address").toString())) fail(pp + "address", "探针地址不能为空");
-                    if (probe.value("port").toInt() <= 0) fail(pp + "port", "探针端口必须大于 0");
-                    if (probe.value("connectTimeoutMs").toInt() <= 0) fail(pp + "connectTimeoutMs", "连接超时必须大于 0");
-                } else if (type == "http") {
-                    if (!nonEmpty(probe.value("url").toString())) fail(pp + "url", "探针 URL 不能为空");
-                    if (probe.value("expectedStatusCodes").toArray().isEmpty()) fail(pp + "expectedStatusCodes", "至少配置一个预期状态码");
-                    if (probe.value("requestTimeoutMs").toInt() <= 0) fail(pp + "requestTimeoutMs", "请求超时必须大于 0");
-                } else {
-                    fail(pp + "type", "探针类型必须为 tcp 或 http");
-                }
             }
         }
         const auto restart = task.value("restartPolicy").toObject();
