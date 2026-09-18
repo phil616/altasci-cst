@@ -65,6 +65,7 @@ class TestRunner final : public IProcessRunner {
 public:
     QStringList events;
     QStringList workingDirectories;
+    QStringList paths;
     QList<std::shared_ptr<TestProcess>> services;
     QString failCommand;
     QString gitVersion = "git version 2.55.0.windows.1";
@@ -83,6 +84,7 @@ public:
         }
         events.append("start:" + spec.program);
         workingDirectories.append(spec.workingDirectory);
+        paths.append(spec.environment.value("PATH"));
         process->stopped = [this, name = spec.program] { events.append("stop:" + name); };
         if (spec.program.contains("prepare")) { process->alive = false; if (spec.program == failCommand) process->exit = 1; }
         else services.append(process);
@@ -131,6 +133,29 @@ private slots:
         QVERIFY_THROWS_EXCEPTION(std::runtime_error, supervisor.start(project(endpoint.serverPort()), "operation", cancel));
         QVERIFY(!runner.events.contains("start:second-serve"));
         supervisor.stop(); QVERIFY(supervisor.empty()); QCOMPARE(runner.events.last(), "stop:first-serve");
+    }
+    void shellCommandsReceiveToolDirectoriesOnPath() {
+        TestRunner runner; TestClock clock; Cancellation cancel;
+        TaskSupervisor supervisor(runner, clock, {});
+        auto taskObject = task("shell-only", 10, 0);
+        auto service = taskObject["serviceCommand"].toObject();
+        service["mode"] = "shell";
+        service.remove("program"); service.remove("arguments");
+        service["script"] = "pnpm install";
+        service["timeoutMs"] = 0;
+        service["successExitCodes"] = QJsonArray{0};
+        taskObject["serviceCommand"] = service;
+        taskObject["prepareCommands"] = QJsonArray{};
+        const auto document = QJsonObject{{"schemaVersion", 1}, {"project", QJsonObject{
+            {"id", "test"}, {"source", QJsonObject{{"workingDirectory", "C:/project"}}},
+            {"toolDirectories", QJsonArray{"C:/Tools"}}, {"requiredPorts", QJsonArray{}},
+            {"tasks", QJsonArray{taskObject}},
+            {"settings", QJsonObject{{"portReclaimTimeoutMs", 1000}, {"maxAncestorEscalation", 8}}}
+        }}};
+        supervisor.start(document["project"].toObject(), "operation", cancel);
+        QVERIFY(!runner.paths.isEmpty());
+        for (const auto &path : runner.paths) QVERIFY(path.startsWith("C:\\Tools"));
+        supervisor.stop();
     }
     void portFreeStability() {
         TestPorts ports; TestClock clock; Cancellation cancel; PortReclaimService reclaim(ports, clock);

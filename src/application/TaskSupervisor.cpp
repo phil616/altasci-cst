@@ -11,6 +11,24 @@ QStringList strings(const QJsonArray &array) { QStringList values; for (const au
 Environment environmentValues(const QJsonObject &object) {
     Environment result; for (auto it = object.begin(); it != object.end(); ++it) result.insert(it.key(), it.value().toString()); return result;
 }
+QStringList toolSearchDirectories(const QStringList &configured, const Environment &environment) {
+    QStringList result;
+    const auto append = [&](const QString &path, bool requireExisting) {
+        const auto normalized = normalizeWindowsPathInput(path);
+        if (normalized.isEmpty() || !isWindowsAbsolutePath(normalized)) return;
+        if (requireExisting && !QFileInfo(normalized).isDir()) return;
+        for (const auto &existing : result) if (QString::compare(existing, normalized, Qt::CaseInsensitive) == 0) return;
+        result.append(normalized);
+    };
+    for (const auto &path : configured) append(path, false);
+    append(environment.value("APPDATA") + "/npm", true);
+    append(environment.value("LOCALAPPDATA") + "/pnpm", true);
+    append(environment.value("USERPROFILE") + "/AppData/Roaming/npm", true);
+    append(environment.value("USERPROFILE") + "/AppData/Local/pnpm", true);
+    append(environment.value("PROGRAMFILES") + "/nodejs", true);
+    append(environment.value("PROGRAMFILES(X86)") + "/nodejs", true);
+    return result;
+}
 [[noreturn]] void taskError(const QString &message) { throw std::runtime_error(message.toUtf8().constData()); }
 }
 TaskSupervisor::TaskSupervisor(IProcessRunner &runner, IClock &clock, ProjectPaths paths)
@@ -39,20 +57,30 @@ ProcessSpec TaskSupervisor::command(const QJsonObject &task, const QJsonObject &
     }
     const auto id = project_.value("id").toString();
     const auto projectDirectory = project_.value("source").toObject().value("workingDirectory").toString();
+    const auto inherited = runner_.inheritedEnvironment();
+    const auto configuredTools = strings(expand(QJsonObject{{"tools", project_.value("toolDirectories")}}).value("tools").toArray());
+    const auto tools = toolSearchDirectories(configuredTools, inherited);
     ProcessSpec result;
     result.projectId = id; result.taskId = task.value("id").toString(); result.operationId = operationId_;
     result.workingDirectory = spec.value("workingDirectory").toString();
     if (result.workingDirectory.trimmed().isEmpty()) result.workingDirectory = expandedTask.value("workingDirectory").toString();
-    result.environment = mergeEnvironment(env.value("inheritSystem").toBool(), runner_.inheritedEnvironment(), files,
+    result.environment = mergeEnvironment(env.value("inheritSystem").toBool(), inherited, files,
         environmentValues(env.value("variables").toObject()), {{"CST_PROJECT_ID", id}, {"CST_PROJECT_DIR", projectDirectory},
         {"CST_DATA_DIR", paths_.dataDirectory(id)}, {"CST_LOG_DIR", paths_.logDirectory(id)}});
+    QStringList pathParts = tools;
+    const auto configuredPath = result.environment.value("PATH");
+    if (!configuredPath.isEmpty()) pathParts.append(configuredPath);
+    const auto inheritedPath = inherited.value("PATH");
+    if (!inheritedPath.isEmpty()) pathParts.append(inheritedPath);
+    pathParts.removeDuplicates();
+    if (!pathParts.isEmpty()) result.environment["PATH"] = pathParts.join(';');
     if (spec.value("mode") == "shell") {
-        result.program = runner_.inheritedEnvironment().value("SYSTEMROOT") + "\\System32\\cmd.exe";
-        result.program = runner_.resolveExecutable(result.program, {});
+        auto commandProcessor = inherited.value("COMSPEC");
+        if (commandProcessor.isEmpty()) commandProcessor = inherited.value("SYSTEMROOT") + "\\System32\\cmd.exe";
+        result.program = runner_.resolveExecutable(commandProcessor, {});
         result.shellCommandLine = "/D /S /C \"" + spec.value("script").toString() + '"';
     } else {
-        const auto tools = expand(QJsonObject{{"tools", project_.value("toolDirectories")}}).value("tools").toArray();
-        result.program = runner_.resolveExecutable(spec.value("program").toString(), strings(tools));
+        result.program = runner_.resolveExecutable(spec.value("program").toString(), tools);
         result.arguments = strings(spec.value("arguments").toArray());
     }
     return result;

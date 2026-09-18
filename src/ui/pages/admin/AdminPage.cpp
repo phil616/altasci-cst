@@ -252,8 +252,8 @@ void AdminPage::normalizeDraftPaths(){
     project["tasks"]=tasks;draft_["project"]=project;
 }
 void AdminPage::showConfigurationProblem(const QString &message){navigation_->setCurrentRow(7);if(issues_)issues_->setText(message);}
-void AdminPage::appendLog(const QString &task,const QString &line){const auto display=formatLogLine(line);logLines_.append({task,display});if(logLines_.size()>5000)logLines_.removeFirst();if(logView_&&(taskFilter_->currentData().toString().isEmpty()||taskFilter_->currentData().toString()==task)&&display.contains(search_->text(),Qt::CaseInsensitive))logView_->appendPlainText(display);}
-void AdminPage::renderLogs(){if(!logView_)return;QStringList lines;const auto task=taskFilter_->currentData().toString();for(const auto &line:logLines_)if((task.isEmpty()||line.first==task)&&line.second.contains(search_->text(),Qt::CaseInsensitive))lines.append(line.second);logView_->setPlainText(lines.join('\n'));}
+void AdminPage::appendLog(const QString &task,const QString &line){const auto display=formatLogLine(line);logLines_.append({task,line});if(logLines_.size()>5000)logLines_.removeFirst();if(logView_&&(taskFilter_->currentData().toString().isEmpty()||taskFilter_->currentData().toString()==task)&&display.contains(search_->text(),Qt::CaseInsensitive))logView_->appendHtml(formatLogLineHtml(line));}
+void AdminPage::renderLogs(){if(!logView_)return;logView_->clear();const auto task=taskFilter_->currentData().toString();for(const auto &line:logLines_)if((task.isEmpty()||line.first==task)&&formatLogLine(line.second).contains(search_->text(),Qt::CaseInsensitive))logView_->appendHtml(formatLogLineHtml(line.second));}
 void AdminPage::editEnv(){
     const auto project=draft_.value("project").toObject();const auto id=project.value("id").toString();const auto directory=paths_.dataDirectory(id)+"\\env";
     const auto path=QFileDialog::getSaveFileName(this,"选择或创建环境文件",directory,"环境文件 (*.env)");if(path.isEmpty())return;

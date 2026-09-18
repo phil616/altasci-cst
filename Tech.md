@@ -104,7 +104,7 @@ Qt 的 `QProcess` 继续用于测试辅助和非关键工具探测，但项目�
 6. 用 `AssignProcessToJobObject` 将尚未执行的子进程加入 Job；
 7. 赋值失败时终止该子进程并返回失败；
 8. 调用 `ResumeThread`；
-9. 两个专用读取线程读取 stdout/stderr，转换成带时间戳的 UTF-8 日志并通过 queued signal 送到 UI；
+9. 两个专用读取线程读取 stdout/stderr；优先按 UTF-8 严格解码，失败后按系统 OEM/ANSI 代码页（中文 Windows 常见 936/GBK）解码，再转成带时间戳的日志并通过 queued signal 送到 UI。ANSI 控制序列不会原样显示，基础颜色会映射为日志视图颜色。
 10. completion-port 线程监听进程退出和活动进程数变为 0 的通知。
 
 每条一次性命令和每个长期服务分别拥有 Job Object。长期服务启动的 `npm -> node -> vite`、`uv -> python -> uvicorn` 等后代默认都会留在同一 Job 中。
@@ -116,7 +116,7 @@ Qt 的 `QProcess` 继续用于测试辅助和非关键工具探测，但项目�
 - `exec`：`program + arguments[]`。CST 先把程序解析为绝对路径，再将绝对路径作为 `CreateProcessW.lpApplicationName`。`.cmd`、`.bat` 和 shell 内建命令不得使用此模式。
 - `shell`：`script`。Windows 固定使用 `%SystemRoot%\\System32\\cmd.exe /D /S /C <script>`。只有需要批处理文件、管道、重定向、`&&` 或 shell 内建命令时使用。
 
-`exec` 的程序查找顺序固定为：绝对路径 → 项目配置的 `toolDirectories`（按数组顺序）→ CST 启动时继承的 `PATH`。不搜索当前工作目录；解析失败直接报错。参数使用统一的 Windows CRT 反向引用算法生成命令行，并用单元测试覆盖空参数、空格、引号和尾部反斜杠。
+`exec` 的程序查找顺序固定为：绝对路径 → 项目配置的 `toolDirectories`（按数组顺序）→ CST 启动时继承的 `PATH`。不搜索当前工作目录；解析失败直接报错。`shell` 模式同样会把 `toolDirectories` 以及常见 Node/pnpm 用户目录前置到子进程 `PATH`，避免提升权限后继承环境缺少用户安装的命令。参数使用统一的 Windows CRT 反向引用算法生成命令行，并用单元测试覆盖空参数、空格、引号和尾部反斜杠。
 
 环境变量合并顺序固定为：
 

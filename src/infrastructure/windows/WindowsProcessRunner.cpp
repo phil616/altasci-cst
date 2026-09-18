@@ -3,14 +3,38 @@
 #include "domain/Configuration.h"
 #include <QDir>
 #include <QFileInfo>
-#include <QStringDecoder>
 #include <QThread>
 #include <mutex>
 #include <thread>
+#include <string>
 #include <vector>
 
 namespace cst {
 namespace {
+QString decodeWithCodePage(const QByteArray &bytes, UINT codePage, bool &strictOk) {
+    strictOk = false;
+    if (bytes.isEmpty()) { strictOk = true; return {}; }
+    const auto size = static_cast<int>(bytes.size());
+    auto length = MultiByteToWideChar(codePage, MB_ERR_INVALID_CHARS, bytes.constData(), size, nullptr, 0);
+    if (length <= 0) return {};
+    std::wstring buffer(static_cast<size_t>(length), L'\0');
+    length = MultiByteToWideChar(codePage, MB_ERR_INVALID_CHARS, bytes.constData(), size, buffer.data(), length);
+    if (length <= 0) return {};
+    strictOk = true;
+    auto text = QString::fromWCharArray(buffer.data(), length);
+    if (text.startsWith(QChar(0xFEFF))) text.remove(0, 1);
+    return text;
+}
+QString decodeProcessOutput(const QByteArray &bytes, bool &decodeError) {
+    bool ok = false;
+    for (const auto codePage : {UINT(CP_UTF8), GetOEMCP(), GetACP()}) {
+        const auto text = decodeWithCodePage(bytes, codePage, ok);
+        if (ok) { decodeError = false; return text; }
+    }
+    const auto fallback = decodeWithCodePage(bytes, GetACP(), ok);
+    decodeError = true;
+    return fallback.isEmpty() ? QString::fromLatin1(bytes) : fallback;
+}
 class Attributes {
 public:
     Attributes() {
@@ -158,9 +182,9 @@ private:
         QByteArray pending; char buffer[8192]; DWORD count = 0;
         const auto deliver = [&](QByteArray line) {
             if (line.endsWith('\r')) line.chop(1);
-            QStringDecoder decoder(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
-            const QString text = decoder(line);
-            if (output_) { try { output_({channel, text, decoder.hasError(), QDateTime::currentDateTimeUtc()}); } catch (...) { /* A consumer cannot interrupt pipe draining. */ } }
+            bool decodeError = false;
+            const QString text = decodeProcessOutput(line, decodeError);
+            if (output_) { try { output_({channel, text, decodeError, QDateTime::currentDateTimeUtc()}); } catch (...) { /* A consumer cannot interrupt pipe draining. */ } }
         };
         while (ReadFile(pipe, buffer, sizeof(buffer), &count, nullptr) && count != 0) {
             pending.append(buffer, static_cast<qsizetype>(count));

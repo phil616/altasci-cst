@@ -78,7 +78,7 @@ void UserPage::setTask(const TaskStatus &task){
     else tasks_->item(row,0)->setText(task.name);
     tasks_->setItem(row,1,new QTableWidgetItem(task.state));tasks_->setItem(row,2,new QTableWidgetItem(QString::number(task.restartCount)));
 }
-void UserPage::appendLog(const QString &line){logs_->appendPlainText(formatLogLine(line));}
+void UserPage::appendLog(const QString &line){logs_->appendHtml(formatLogLineHtml(line));}
 void UserPage::arrangeActions(){const int columns=width()<900?1:2;actions_->setColumnStretch(1,columns==2?1:0);for(qsizetype i=0;i<buttons_.size();++i){actions_->removeWidget(buttons_[i]);actions_->addWidget(buttons_[i],int(i)/columns,int(i)%columns);}}
 void UserPage::resizeEvent(QResizeEvent *event){QWidget::resizeEvent(event);arrangeActions();}
 }
