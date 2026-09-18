@@ -104,7 +104,7 @@ void ProjectRuntimeService::start() {
             projectLock_->setStaleLockTime(0);
             if (!projectLock_->tryLock(0)) throw std::runtime_error("另一个 CST 操作正在使用该项目");
             const auto target = project.value("source").toObject().value("workingDirectory").toString();
-            if (!QFileInfo(target).isDir()) throw std::runtime_error("源码目录不存在；请先同步代码");
+            if (!target.trimmed().isEmpty() && !QFileInfo(target).isDir()) throw std::runtime_error("源码目录不存在；请先同步代码");
             supervisor_.preflight(project, *cancel);
             queue_.post([this] { event(RuntimeEvent::ChecksPassed); }); stage = Stage::Ports;
             const auto settings = project.value("settings").toObject();

@@ -42,7 +42,8 @@ ProcessSpec TaskSupervisor::command(const QJsonObject &task, const QJsonObject &
     const auto projectDirectory = project_.value("source").toObject().value("workingDirectory").toString();
     ProcessSpec result;
     result.projectId = id; result.taskId = task.value("id").toString(); result.operationId = operationId_;
-    result.workingDirectory = expandedTask.value("workingDirectory").toString();
+    result.workingDirectory = spec.value("workingDirectory").toString();
+    if (result.workingDirectory.trimmed().isEmpty()) result.workingDirectory = expandedTask.value("workingDirectory").toString();
     result.environment = mergeEnvironment(env.value("inheritSystem").toBool(), runner_.inheritedEnvironment(), files,
         environmentValues(env.value("variables").toObject()), {{"CST_PROJECT_ID", id}, {"CST_PROJECT_DIR", projectDirectory},
         {"CST_DATA_DIR", paths_.dataDirectory(id)}, {"CST_LOG_DIR", paths_.logDirectory(id)}});
@@ -67,14 +68,23 @@ void TaskSupervisor::preflight(const QJsonObject &project, const Cancellation &c
     const auto id = project.value("id").toString();
     if (!QDir().mkpath(paths_.dataDirectory(id)) || !QDir().mkpath(paths_.logDirectory(id))) taskError("无法创建项目数据或日志目录");
     const auto directory = project.value("source").toObject().value("workingDirectory").toString();
-    const auto canonical = QFileInfo(directory).canonicalFilePath();
-    for (const auto &reserved : {paths_.installDirectory, paths_.storageDirectory, paths_.windowsDirectory})
-        if (isWithinWindowsPath(canonical, reserved)) taskError("源码目录的实际路径位于受保护目录内");
+    if (!directory.trimmed().isEmpty()) {
+        const auto canonical = QFileInfo(directory).canonicalFilePath();
+        for (const auto &reserved : {paths_.installDirectory, paths_.storageDirectory, paths_.windowsDirectory})
+            if (isWithinWindowsPath(canonical, reserved)) taskError("源码目录的实际路径位于受保护目录内");
+    }
     for (const auto &value : project.value("tasks").toArray()) {
-        cancel.check(); const auto task = value.toObject();
-        if (!QFileInfo(expand(task).value("workingDirectory").toString()).isDir()) taskError("任务工作目录不存在：" + task.value("name").toString());
-        for (const auto &spec : task.value("prepareCommands").toArray()) { cancel.check(); command(task, spec.toObject()); }
-        command(task, task.value("serviceCommand").toObject());
+        cancel.check(); const auto task = value.toObject(); const auto expandedTask = expand(task);
+        const auto checkDirectory = [&](const QJsonObject &raw, const QString &label) {
+            const auto spec = expand(raw);
+            auto commandDirectory = spec.value("workingDirectory").toString();
+            if (commandDirectory.trimmed().isEmpty()) commandDirectory = expandedTask.value("workingDirectory").toString();
+            if (!QFileInfo(commandDirectory).isDir()) taskError("命令工作目录不存在：" + task.value("name").toString() + " / " + label + "：" + commandDirectory);
+        };
+        for (const auto &spec : task.value("prepareCommands").toArray()) { cancel.check(); checkDirectory(spec.toObject(), spec.toObject().value("name").toString()); command(task, spec.toObject()); }
+        const auto service = task.value("serviceCommand").toObject();
+        checkDirectory(service, service.value("name").toString());
+        command(task, service);
     }
 }
 void TaskSupervisor::prepare(Task &task, const QJsonObject &spec, const Cancellation &cancel) {

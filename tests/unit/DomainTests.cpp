@@ -23,6 +23,16 @@ class DomainTests final : public QObject {
         task[key] = value; tasks[0] = task; project["tasks"] = tasks; document["project"] = project;
         return document;
     }
+    QJsonObject changedServiceDirectory(const QString &value) const {
+        auto document = example_;
+        auto project = document["project"].toObject();
+        auto tasks = project["tasks"].toArray();
+        auto task = tasks[0].toObject();
+        auto command = task["serviceCommand"].toObject();
+        command["workingDirectory"] = value; task["serviceCommand"] = command;
+        tasks[0] = task; project["tasks"] = tasks; document["project"] = project;
+        return document;
+    }
 private slots:
     void initTestCase() {
         QFile schema(QStringLiteral(CST_SOURCE_DIR "/config/cst-project.schema.json"));
@@ -51,8 +61,8 @@ private slots:
         service.remove("script"); service["timeoutMs"] = 1; QVERIFY(!validate(changedTask("serviceCommand", service)).isEmpty());
         service["timeoutMs"] = 0; service["program"] = "npm.CMD"; QVERIFY(!validate(changedTask("serviceCommand", service)).isEmpty());
         service["program"] = "uv.exe"; service["successExitCodes"] = QJsonArray{0, 0}; QVERIFY(!validate(changedTask("serviceCommand", service)).isEmpty());
-        QVERIFY(!validate(changedTask("workingDirectory", "{{UNKNOWN}}\\x")).isEmpty());
-        QVERIFY(!validate(changedTask("workingDirectory", "relative\\x")).isEmpty());
+        QVERIFY(!validate(changedServiceDirectory("{{UNKNOWN}}\\x")).isEmpty());
+        QVERIFY(!validate(changedServiceDirectory("relative\\x")).isEmpty());
         auto readiness = task["readiness"].toObject(); readiness["probes"] = QJsonArray{};
         QVERIFY(validate(changedTask("readiness", readiness)).isEmpty());
         QVERIFY(!validateRun(changedTask("readiness", readiness)).isEmpty());
@@ -97,14 +107,21 @@ private slots:
         auto document=example_;auto project=document["project"].toObject();auto source=project["source"].toObject();
         source["workingDirectory"]="C:/Program Files/My Project";source["gitExecutable"]="C:/Program Files/Git/cmd/git.exe";project["source"]=source;
         project["toolDirectories"]=QJsonArray{"C:/Program Files/nodejs"};
-        auto tasks=project["tasks"].toArray();auto task=tasks[0].toObject();task["workingDirectory"]="{{PROJECT_DIR}}/backend";auto env=task["environment"].toObject();env["envFiles"]=QJsonArray{"{{DATA_DIR}}/env/backend.env"};task["environment"]=env;auto service=task["serviceCommand"].toObject();service["program"]="C:/Program Files/My App/app.exe";task["serviceCommand"]=service;tasks[0]=task;project["tasks"]=tasks;document["project"]=project;
-        const auto normalized=normalizeProjectPaths(document);const auto np=normalized["project"].toObject();
+        auto tasks=project["tasks"].toArray();auto task=tasks[0].toObject();
+        task["workingDirectory"]="{{PROJECT_DIR}}/legacy"; // legacy default, should migrate to commands without their own directory
+        auto env=task["environment"].toObject();env["envFiles"]=QJsonArray{"{{DATA_DIR}}/env/backend.env"};task["environment"]=env;
+        auto prepare=task["prepareCommands"].toArray();auto prepareCommand=prepare[0].toObject();prepareCommand.remove("workingDirectory");prepare[0]=prepareCommand;task["prepareCommands"]=prepare;
+        auto service=task["serviceCommand"].toObject();service["workingDirectory"]="C:/Program Files/My App/service";service["program"]="C:/Program Files/My App/app.exe";task["serviceCommand"]=service;
+        tasks[0]=task;project["tasks"]=tasks;document["project"]=project;
+        const auto normalized=normalizeProjectPaths(document);const auto np=normalized["project"].toObject();const auto nt=np["tasks"].toArray()[0].toObject();
         QCOMPARE(np["source"].toObject()["workingDirectory"].toString(),QString("C:\\Program Files\\My Project"));
         QCOMPARE(np["source"].toObject()["gitExecutable"].toString(),QString("C:\\Program Files\\Git\\cmd\\git.exe"));
         QCOMPARE(np["toolDirectories"].toArray()[0].toString(),QString("C:\\Program Files\\nodejs"));
-        QCOMPARE(np["tasks"].toArray()[0].toObject()["workingDirectory"].toString(),QString("{{PROJECT_DIR}}\\backend"));
-        QCOMPARE(np["tasks"].toArray()[0].toObject()["environment"].toObject()["envFiles"].toArray()[0].toString(),QString("{{DATA_DIR}}\\env\\backend.env"));
-        QCOMPARE(np["tasks"].toArray()[0].toObject()["serviceCommand"].toObject()["program"].toString(),QString("C:\\Program Files\\My App\\app.exe"));
+        QCOMPARE(nt["prepareCommands"].toArray()[0].toObject()["workingDirectory"].toString(),QString("{{PROJECT_DIR}}\\legacy"));
+        QCOMPARE(nt["serviceCommand"].toObject()["workingDirectory"].toString(),QString("C:\\Program Files\\My App\\service"));
+        QCOMPARE(nt["serviceCommand"].toObject()["program"].toString(),QString("C:\\Program Files\\My App\\app.exe"));
+        QVERIFY(!nt.contains("workingDirectory"));
+        QCOMPARE(nt["environment"].toObject()["envFiles"].toArray()[0].toString(),QString("{{DATA_DIR}}\\env\\backend.env"));
     }
     void pathsAndUrls() {
         QVERIFY(isWindowsAbsolutePath("C:\\folder")); QVERIFY(isWindowsAbsolutePath("\\\\server\\share\\folder"));

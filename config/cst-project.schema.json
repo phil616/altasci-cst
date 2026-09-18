@@ -213,6 +213,10 @@
             "minimum": -2147483648,
             "maximum": 2147483647
           }
+        },
+        "workingDirectory": {
+          "type": "string",
+          "maxLength": 1024
         }
       }
     },
@@ -351,10 +355,6 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 1000000
-        },
-        "workingDirectory": {
-          "type": "string",
-          "maxLength": 1024
         },
         "environment": {
           "$ref": "#/$defs/environment"

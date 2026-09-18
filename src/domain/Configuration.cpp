@@ -151,19 +151,23 @@ QJsonObject normalizeProjectPaths(QJsonObject document) {
     for (qsizetype i = 0; i < tasks.size(); ++i) {
         if (!tasks[i].isObject()) continue;
         auto task = tasks[i].toObject();
-        if (task.value("workingDirectory").isString()) task["workingDirectory"] = normalizeWindowsPathInput(task.value("workingDirectory").toString());
+        QString taskDirectory;
+        if (task.value("workingDirectory").isString()) taskDirectory = normalizeWindowsPathInput(task.value("workingDirectory").toString());
         if (task.contains("environment") && task.value("environment").isObject()) {
             auto environment = task.value("environment").toObject();
             if (environment.contains("envFiles")) environment["envFiles"] = normalizeArray(environment.value("envFiles").toArray());
             task["environment"] = environment;
         }
-        auto normalizeCommands = [](const QJsonArray &commands) {
+        auto normalizeCommands = [taskDirectory](const QJsonArray &commands) {
             QJsonArray normalized;
             for (const auto &value : commands) {
                 if (!value.isObject()) { normalized.append(value); continue; }
                 auto command = value.toObject();
                 if (command.value("mode").toString() == "exec" && command.value("program").isString())
                     command["program"] = normalizeWindowsPathInput(command.value("program").toString());
+                const auto commandDirectory = command.value("workingDirectory").toString().trimmed();
+                if (!commandDirectory.isEmpty()) command["workingDirectory"] = normalizeWindowsPathInput(commandDirectory);
+                else if (!taskDirectory.isEmpty()) command["workingDirectory"] = taskDirectory;
                 normalized.append(command);
             }
             return normalized;
@@ -173,8 +177,12 @@ QJsonObject normalizeProjectPaths(QJsonObject document) {
             auto command = task.value("serviceCommand").toObject();
             if (command.value("mode").toString() == "exec" && command.value("program").isString())
                 command["program"] = normalizeWindowsPathInput(command.value("program").toString());
+            const auto commandDirectory = command.value("workingDirectory").toString().trimmed();
+            if (!commandDirectory.isEmpty()) command["workingDirectory"] = normalizeWindowsPathInput(commandDirectory);
+            else if (!taskDirectory.isEmpty()) command["workingDirectory"] = taskDirectory;
             task["serviceCommand"] = command;
         }
+        task.remove("workingDirectory");
         tasks[i] = task;
     }
     project["tasks"] = tasks;
@@ -343,8 +351,6 @@ ValidationIssues ConfigurationValidator::validate(const QJsonObject &document) c
             unique(taskIds, id, path + "id");
         }
         if (task.contains("order")) unique(taskOrders, task.value("order").toInt(), path + "order");
-        const auto taskDirectory = task.value("workingDirectory").toString().trimmed();
-        if (nonEmpty(taskDirectory)) absolute(taskDirectory, path + "workingDirectory", true);
         const auto env = task.value("environment").toObject();
         for (const auto &file : env.value("envFiles").toArray()) {
             if (!nonEmpty(file.toString())) continue;
@@ -368,6 +374,8 @@ ValidationIssues ConfigurationValidator::validate(const QJsonObject &document) c
                 if (!validId(commandId)) fail(cp + "id", "命令标识格式无效");
                 unique(commandIds, commandId, cp + "id");
             }
+            const auto commandDirectory = command.value("workingDirectory").toString().trimmed();
+            if (nonEmpty(commandDirectory)) absolute(commandDirectory, cp + "workingDirectory", true);
             const auto mode = command.value("mode").toString();
             if (command.contains("timeoutMs")) {
                 const auto timeout = command.value("timeoutMs").toInt();
@@ -460,7 +468,6 @@ ValidationIssues ConfigurationValidator::validateForRun(const QJsonObject &docum
     const auto fail = [&](const QString &path, const QString &message) { issues.append({"/project/" + path, message}); };
     const auto nonEmpty = [](const QString &text) { return !text.trimmed().isEmpty(); };
     if (!nonEmpty(project.value("name").toString())) fail("name", "项目名称不能为空");
-    if (!nonEmpty(source.value("workingDirectory").toString())) fail("source/workingDirectory", "启动前必须配置源码或工作目录");
     const auto tasks = project.value("tasks").toArray();
     if (tasks.isEmpty()) fail("tasks", "至少配置一个任务后才能启动");
     for (qsizetype i = 0; i < tasks.size(); ++i) {
@@ -468,12 +475,12 @@ ValidationIssues ConfigurationValidator::validateForRun(const QJsonObject &docum
         const auto path = "tasks/" + QString::number(i) + '/';
         if (!nonEmpty(task.value("id").toString())) fail(path + "id", "任务标识不能为空");
         if (!nonEmpty(task.value("name").toString())) fail(path + "name", "任务名称不能为空");
-        if (!nonEmpty(task.value("workingDirectory").toString())) fail(path + "workingDirectory", "任务工作目录不能为空");
         const auto service = task.value("serviceCommand").toObject();
         const auto servicePath = path + "serviceCommand/";
         if (service.isEmpty()) {
             fail(path + "serviceCommand", "必须配置长期服务命令");
         } else {
+            if (!nonEmpty(service.value("workingDirectory").toString())) fail(servicePath + "workingDirectory", "服务命令工作目录不能为空");
             const auto mode = service.value("mode").toString();
             if (mode == "exec") {
                 if (!nonEmpty(service.value("program").toString())) fail(servicePath + "program", "必须配置程序");
@@ -491,6 +498,7 @@ ValidationIssues ConfigurationValidator::validateForRun(const QJsonObject &docum
         for (qsizetype j = 0; j < prepares.size(); ++j) {
             const auto command = prepares[j].toObject();
             const auto cp = path + "prepareCommands/" + QString::number(j) + '/';
+            if (!nonEmpty(command.value("workingDirectory").toString())) fail(cp + "workingDirectory", "准备命令工作目录不能为空");
             const auto mode = command.value("mode").toString();
             const auto timeout = command.value("timeoutMs").toInt();
             if (mode == "exec") {

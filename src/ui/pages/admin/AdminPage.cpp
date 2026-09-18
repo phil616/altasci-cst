@@ -238,11 +238,15 @@ void AdminPage::normalizeDraftPaths(){
     QJsonArray tools;for(const auto &value:project.value("toolDirectories").toArray())tools.append(normalizeWindowsPathInput(value.toString()));project["toolDirectories"]=tools;
     QJsonArray tasks=project.value("tasks").toArray();
     for(qsizetype i=0;i<tasks.size();++i){
-        auto task=tasks[i].toObject();task["workingDirectory"]=normalizeWindowsPathInput(task.value("workingDirectory").toString());
+        auto task=tasks[i].toObject();const auto taskDirectory=normalizeWindowsPathInput(task.value("workingDirectory").toString());
         auto env=task.value("environment").toObject();QJsonArray envFiles;for(const auto &value:env.value("envFiles").toArray())envFiles.append(normalizeWindowsPathInput(value.toString()));env["envFiles"]=envFiles;task["environment"]=env;
-        auto normalizeCommand=[](QJsonObject command){if(command.value("mode").toString()=="exec")command["program"]=normalizeWindowsPathInput(command.value("program").toString());return command;};
+        auto normalizeCommand=[taskDirectory](QJsonObject command){
+            if(command.value("mode").toString()=="exec")command["program"]=normalizeWindowsPathInput(command.value("program").toString());
+            const auto directory=command.value("workingDirectory").toString().trimmed();
+            if(!directory.isEmpty())command["workingDirectory"]=normalizeWindowsPathInput(directory);else if(!taskDirectory.isEmpty())command["workingDirectory"]=taskDirectory;
+            return command;};
         auto prepare=task.value("prepareCommands").toArray();for(qsizetype j=0;j<prepare.size();++j)prepare[j]=normalizeCommand(prepare[j].toObject());task["prepareCommands"]=prepare;
-        task["serviceCommand"]=normalizeCommand(task.value("serviceCommand").toObject());
+        task["serviceCommand"]=normalizeCommand(task.value("serviceCommand").toObject());task.remove("workingDirectory");
         tasks[i]=task;
     }
     project["tasks"]=tasks;draft_["project"]=project;

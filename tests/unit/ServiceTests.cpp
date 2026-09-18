@@ -63,6 +63,7 @@ void writeMarker(const QString &directory, const QString &name) {
 class TestRunner final : public IProcessRunner {
 public:
     QStringList events;
+    QStringList workingDirectories;
     QList<std::shared_ptr<TestProcess>> services;
     QString failCommand;
     QString gitVersion = "git version 2.55.0.windows.1";
@@ -80,6 +81,7 @@ public:
             return process;
         }
         events.append("start:" + spec.program);
+        workingDirectories.append(spec.workingDirectory);
         process->stopped = [this, name = spec.program] { events.append("stop:" + name); };
         if (spec.program.contains("prepare")) { process->alive = false; if (spec.program == failCommand) process->exit = 1; }
         else services.append(process);
@@ -89,10 +91,10 @@ public:
     Environment inheritedEnvironment() const override { return {}; }
 };
 QJsonObject task(const QString &id, int order, quint16 port) {
-    return {{"id", id}, {"name", id}, {"order", order}, {"workingDirectory", "C:/project"},
+    return {{"id", id}, {"name", id}, {"order", order},
         {"environment", QJsonObject{{"inheritSystem", false}, {"envFiles", QJsonArray{}}, {"variables", QJsonObject{}}}},
-        {"prepareCommands", QJsonArray{QJsonObject{{"id", id + "-prepare"}, {"name", id + "-prepare"}, {"mode", "exec"}, {"program", id + "-prepare"}, {"arguments", QJsonArray{}}, {"timeoutMs", 1000}, {"successExitCodes", QJsonArray{0}}}}},
-        {"serviceCommand", QJsonObject{{"id", id + "-serve"}, {"mode", "exec"}, {"program", id + "-serve"}, {"arguments", QJsonArray{}}, {"timeoutMs", 0}, {"successExitCodes", QJsonArray{0}}}},
+        {"prepareCommands", QJsonArray{QJsonObject{{"id", id + "-prepare"}, {"name", id + "-prepare"}, {"mode", "exec"}, {"program", id + "-prepare"}, {"arguments", QJsonArray{}}, {"workingDirectory", "C:/project/prepare"}, {"timeoutMs", 1000}, {"successExitCodes", QJsonArray{0}}}}},
+        {"serviceCommand", QJsonObject{{"id", id + "-serve"}, {"mode", "exec"}, {"program", id + "-serve"}, {"arguments", QJsonArray{}}, {"workingDirectory", "C:/project/service"}, {"timeoutMs", 0}, {"successExitCodes", QJsonArray{0}}}},
         {"readiness", QJsonObject{{"timeoutMs", 1000}, {"pollIntervalMs", 100}, {"successThreshold", 2}, {"probes", QJsonArray{QJsonObject{{"type", "tcp"}, {"address", "127.0.0.1"}, {"port", port}, {"connectTimeoutMs", 100}}}}}},
         {"restartPolicy", QJsonObject{{"maxRestarts", 5}, {"windowSeconds", 600}, {"backoffSeconds", 1}, {"maxBackoffSeconds", 30}}}, {"shutdownGraceMs", 0}};
 }
@@ -112,6 +114,7 @@ private slots:
         TaskSupervisor supervisor(runner, readiness, reclaim, clock, {"C:/app", "C:/data", "C:/Windows"});
         supervisor.start(project(endpoint.serverPort()), "operation", cancel);
         QCOMPARE(runner.events, QStringList({"start:first-prepare", "start:first-serve", "start:second-prepare", "start:second-serve"}));
+        QCOMPARE(runner.workingDirectories, QStringList({"C:/project/prepare", "C:/project/service", "C:/project/prepare", "C:/project/service"}));
         runner.services[0]->alive = false;
         supervisor.tick(cancel); clock.now += 1000; supervisor.tick(cancel);
         QCOMPARE(runner.events.last(), "start:first-serve");

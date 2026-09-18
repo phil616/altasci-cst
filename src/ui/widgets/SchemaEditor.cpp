@@ -59,7 +59,7 @@ QString fieldHelp(const QString &key) {
     static const QMap<QString,QString> hints{
         {"id","唯一标识，用于配置引用。请使用稳定的英文、数字或短横线。"},
         {"order","数值越小越先启动；停止时按相反顺序执行。"},
-        {"workingDirectory","使用绝对路径，或 {{PROJECT_DIR}} 等目录占位符。"},
+        {"workingDirectory","每个命令可以独立设置工作目录。使用绝对路径，或 {{PROJECT_DIR}} 等目录占位符。"},
         {"mode","exec 直接运行程序；shell 执行多行脚本。"},
         {"program","填写可执行文件名或完整路径。参数在下方逐项添加。"},
         {"arguments","每项代表一个参数，无需自行添加外层引号。列表顺序即传入顺序。"},
@@ -201,7 +201,7 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
     if (type == "object") {
         auto *form = new QFormLayout; form->setVerticalSpacing(16); form->setHorizontalSpacing(20); form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow); form->setRowWrapPolicy(QFormLayout::WrapLongRows); form->setLabelAlignment(Qt::AlignLeft | Qt::AlignTop); layout->addLayout(form);
         auto editors = std::make_shared<QMap<QString, SchemaEditor *>>(); const auto properties = rule.value("properties").toObject();
-        const QStringList preferredOrder{"id","name","description","order","mode","program","arguments","script","workingDirectory","repositoryUrl","branch","gitExecutable","credentialTarget","timeoutMs","successExitCodes","serviceCommand","prepareCommands","environment","inheritSystem","envFiles","variables","readiness","type","address","port","url","restartPolicy","shutdownGraceMs"};
+        const QStringList preferredOrder{"id","name","description","order","mode","workingDirectory","program","arguments","script","repositoryUrl","branch","gitExecutable","credentialTarget","timeoutMs","successExitCodes","serviceCommand","prepareCommands","environment","inheritSystem","envFiles","variables","readiness","type","address","port","url","restartPolicy","shutdownGraceMs"};
         auto keys = properties.keys();
         std::stable_sort(keys.begin(), keys.end(), [&preferredOrder](const QString &a, const QString &b) {
             const auto rank = [&preferredOrder](const QString &key) { const auto index = preferredOrder.indexOf(key); return index < 0 ? preferredOrder.size() : index; };

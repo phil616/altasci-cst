@@ -406,7 +406,7 @@ JSON Schema 之外还必须检查：
 - `exec` 的 program 不能是 `.cmd` 或 `.bat`；
 - URL 只允许 `http`、`https`，必须是绝对 URL；
 - Git URL 只允许 HTTPS 且不含用户名、密码、查询串或 fragment；
-- 工作目录、env 文件和 Git 可执行文件路径必须符合 Windows 绝对路径规则；
+- 命令级工作目录、env 文件和 Git 可执行文件路径必须符合 Windows 绝对路径规则；
 - task 至少有一个 readiness probe；
 - 端口号与 protocol/address 组合唯一。
 
