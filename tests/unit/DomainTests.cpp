@@ -107,7 +107,7 @@ private slots:
         task["workingDirectory"]="{{PROJECT_DIR}}/legacy"; // legacy default, should migrate to commands without their own directory
         auto env=task["environment"].toObject();env["envFiles"]=QJsonArray{"{{DATA_DIR}}/env/backend.env"};task["environment"]=env;
         auto prepare=task["prepareCommands"].toArray();auto prepareCommand=prepare[0].toObject();prepareCommand.remove("workingDirectory");prepare[0]=prepareCommand;task["prepareCommands"]=prepare;
-        auto service=task["serviceCommand"].toObject();service["workingDirectory"]="C:/Program Files/My App/service";service["program"]="C:/Program Files/My App/app.exe";task["serviceCommand"]=service;
+        auto service=task["serviceCommand"].toObject();service["workingDirectory"]="C:/Program Files/My App/service";service["program"]="C:/Program Files/My App/app.exe";service["activationScript"]="C:/Program Files/My Env/Scripts/activate.bat";task["serviceCommand"]=service;
         tasks[0]=task;project["tasks"]=tasks;document["project"]=project;
         const auto normalized=normalizeProjectPaths(document);const auto np=normalized["project"].toObject();const auto nt=np["tasks"].toArray()[0].toObject();
         QCOMPARE(np["source"].toObject()["workingDirectory"].toString(),QString("C:\\Program Files\\My Project"));
@@ -116,6 +116,7 @@ private slots:
         QCOMPARE(nt["prepareCommands"].toArray()[0].toObject()["workingDirectory"].toString(),QString("{{PROJECT_DIR}}\\legacy"));
         QCOMPARE(nt["serviceCommand"].toObject()["workingDirectory"].toString(),QString("C:\\Program Files\\My App\\service"));
         QCOMPARE(nt["serviceCommand"].toObject()["program"].toString(),QString("C:\\Program Files\\My App\\app.exe"));
+        QCOMPARE(nt["serviceCommand"].toObject()["activationScript"].toString(),QString("C:\\Program Files\\My Env\\Scripts\\activate.bat"));
         QVERIFY(!nt.contains("workingDirectory"));
         QCOMPARE(nt["environment"].toObject()["envFiles"].toArray()[0].toString(),QString("{{DATA_DIR}}\\env\\backend.env"));
     }

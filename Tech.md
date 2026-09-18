@@ -116,6 +116,8 @@ Qt 的 `QProcess` 继续用于测试辅助和非关键工具探测，但项目�
 - `exec`：`program + arguments[]`。CST 先把程序解析为绝对路径，再将绝对路径作为 `CreateProcessW.lpApplicationName`。`.cmd`、`.bat` 和 shell 内建命令不得使用此模式。
 - `shell`：`script`。Windows 固定使用 `%SystemRoot%\\System32\\cmd.exe /D /S /C <script>`。只有需要批处理文件、管道、重定向、`&&` 或 shell 内建命令时使用。
 
+命令可选字段 `activationScript` 指定一个 Windows 批处理激活脚本（例如 `{{PROJECT_DIR}}\\.venv\\Scripts\\activate.bat`）。该脚本会在命令执行前通过 `call` 生效；`exec` 模式会因此被包装为 cmd 命令，`shell` 模式会直接前置 `call`。准备命令和长期服务命令各自独立激活，不共享激活后的环境。
+
 `exec` 的程序查找顺序固定为：绝对路径 → 项目配置的 `toolDirectories`（按数组顺序）→ CST 启动时继承的 `PATH`。不搜索当前工作目录；解析失败直接报错。`shell` 模式同样会把 `toolDirectories` 以及常见 Node/pnpm 用户目录前置到子进程 `PATH`，避免提升权限后继承环境缺少用户安装的命令。参数使用统一的 Windows CRT 反向引用算法生成命令行，并用单元测试覆盖空参数、空格、引号和尾部反斜杠。
 
 环境变量合并顺序固定为：

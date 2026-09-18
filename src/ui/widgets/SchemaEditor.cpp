@@ -45,7 +45,7 @@ QString fieldLabel(const QString &key) {
         {"connectTimeoutMs", "连接超时（毫秒）"}, {"pollIntervalMs", "检测间隔（毫秒）"}, {"successThreshold", "连续成功次数"},
         {"maxRestarts", "最多重启次数"}, {"windowSeconds", "统计窗口（秒）"}, {"backoffSeconds", "初始退避（秒）"},
         {"maxBackoffSeconds", "最大退避（秒）"}, {"label", "按钮文字"}, {"availableWhen", "可用条件"},
-        {"repositoryUrl", "HTTPS 仓库地址"}, {"branch", "分支"}, {"gitExecutable", "Git 可执行文件"},
+        {"activationScript", "激活脚本"}, {"repositoryUrl", "HTTPS 仓库地址"}, {"branch", "分支"}, {"gitExecutable", "Git 可执行文件"},
         {"credentialTarget", "凭据名称"}, {"toolDirectories", "工具查找目录"}, {"portReclaimTimeoutMs", "端口释放超时（毫秒）"},
         {"maxAncestorEscalation", "最多上溯层数"}};
     return labels.value(key, key);
@@ -60,6 +60,7 @@ QString fieldHelp(const QString &key) {
         {"id","唯一标识，用于配置引用。请使用稳定的英文、数字或短横线。"},
         {"order","数值越小越先启动；停止时按相反顺序执行。"},
         {"workingDirectory","每个命令可以独立设置工作目录。使用绝对路径，或 {{PROJECT_DIR}} 等目录占位符。"},
+        {"activationScript","可选。先调用此批处理脚本完成环境激活，例如 {{PROJECT_DIR}}\\.venv\\Scripts\\activate.bat，再执行本命令。"},
         {"mode","exec 直接运行程序；shell 执行多行脚本。"},
         {"program","填写可执行文件名或完整路径。参数在下方逐项添加。"},
         {"arguments","每项代表一个参数，无需自行添加外层引号。列表顺序即传入顺序。"},
@@ -82,7 +83,7 @@ QString fieldHelp(const QString &key) {
 }
 QString pathModeForKey(const QString &key) {
     if (key == "workingDirectory" || key == "toolDirectories") return "directory";
-    if (key == "envFiles" || key == "gitExecutable" || key == "program") return "file";
+    if (key == "envFiles" || key == "gitExecutable" || key == "program" || key == "activationScript") return "file";
     return {};
 }
 QString summary(const QJsonValue &value) {
@@ -199,7 +200,7 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
     if (type == "object") {
         auto *form = new QFormLayout; form->setVerticalSpacing(16); form->setHorizontalSpacing(20); form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow); form->setRowWrapPolicy(QFormLayout::WrapLongRows); form->setLabelAlignment(Qt::AlignLeft | Qt::AlignTop); layout->addLayout(form);
         auto editors = std::make_shared<QMap<QString, SchemaEditor *>>(); const auto properties = rule.value("properties").toObject();
-        const QStringList preferredOrder{"id","name","description","order","mode","workingDirectory","program","arguments","script","repositoryUrl","branch","gitExecutable","credentialTarget","timeoutMs","successExitCodes","serviceCommand","prepareCommands","environment","inheritSystem","envFiles","variables","type","address","port","url","restartPolicy","shutdownGraceMs"};
+        const QStringList preferredOrder{"id","name","description","order","mode","workingDirectory","activationScript","program","arguments","script","repositoryUrl","branch","gitExecutable","credentialTarget","timeoutMs","successExitCodes","serviceCommand","prepareCommands","environment","inheritSystem","envFiles","variables","type","address","port","url","restartPolicy","shutdownGraceMs"};
         auto keys = properties.keys();
         std::stable_sort(keys.begin(), keys.end(), [&preferredOrder](const QString &a, const QString &b) {
             const auto rank = [&preferredOrder](const QString &key) { const auto index = preferredOrder.indexOf(key); return index < 0 ? preferredOrder.size() : index; };

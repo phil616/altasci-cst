@@ -242,6 +242,8 @@ void AdminPage::normalizeDraftPaths(){
         auto env=task.value("environment").toObject();QJsonArray envFiles;for(const auto &value:env.value("envFiles").toArray())envFiles.append(normalizeWindowsPathInput(value.toString()));env["envFiles"]=envFiles;task["environment"]=env;
         auto normalizeCommand=[taskDirectory](QJsonObject command){
             if(command.value("mode").toString()=="exec")command["program"]=normalizeWindowsPathInput(command.value("program").toString());
+            const auto activation=command.value("activationScript").toString().trimmed();
+            if(!activation.isEmpty())command["activationScript"]=normalizeWindowsPathInput(activation);
             const auto directory=command.value("workingDirectory").toString().trimmed();
             if(!directory.isEmpty())command["workingDirectory"]=normalizeWindowsPathInput(directory);else if(!taskDirectory.isEmpty())command["workingDirectory"]=taskDirectory;
             return command;};

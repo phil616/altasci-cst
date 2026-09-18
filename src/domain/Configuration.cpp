@@ -165,6 +165,8 @@ QJsonObject normalizeProjectPaths(QJsonObject document) {
                 auto command = value.toObject();
                 if (command.value("mode").toString() == "exec" && command.value("program").isString())
                     command["program"] = normalizeWindowsPathInput(command.value("program").toString());
+                const auto activation = command.value("activationScript").toString().trimmed();
+                if (!activation.isEmpty()) command["activationScript"] = normalizeWindowsPathInput(activation);
                 const auto commandDirectory = command.value("workingDirectory").toString().trimmed();
                 if (!commandDirectory.isEmpty()) command["workingDirectory"] = normalizeWindowsPathInput(commandDirectory);
                 else if (!taskDirectory.isEmpty()) command["workingDirectory"] = taskDirectory;
@@ -177,6 +179,8 @@ QJsonObject normalizeProjectPaths(QJsonObject document) {
             auto command = task.value("serviceCommand").toObject();
             if (command.value("mode").toString() == "exec" && command.value("program").isString())
                 command["program"] = normalizeWindowsPathInput(command.value("program").toString());
+            const auto activation = command.value("activationScript").toString().trimmed();
+            if (!activation.isEmpty()) command["activationScript"] = normalizeWindowsPathInput(activation);
             const auto commandDirectory = command.value("workingDirectory").toString().trimmed();
             if (!commandDirectory.isEmpty()) command["workingDirectory"] = normalizeWindowsPathInput(commandDirectory);
             else if (!taskDirectory.isEmpty()) command["workingDirectory"] = taskDirectory;
@@ -376,6 +380,8 @@ ValidationIssues ConfigurationValidator::validate(const QJsonObject &document) c
             }
             const auto commandDirectory = command.value("workingDirectory").toString().trimmed();
             if (nonEmpty(commandDirectory)) absolute(commandDirectory, cp + "workingDirectory", true);
+            const auto activation = command.value("activationScript").toString().trimmed();
+            if (nonEmpty(activation)) absolute(activation, cp + "activationScript", true);
             const auto mode = command.value("mode").toString();
             if (command.contains("timeoutMs")) {
                 const auto timeout = command.value("timeoutMs").toInt();

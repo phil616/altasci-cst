@@ -74,14 +74,25 @@ ProcessSpec TaskSupervisor::command(const QJsonObject &task, const QJsonObject &
     if (!inheritedPath.isEmpty()) pathParts.append(inheritedPath);
     pathParts.removeDuplicates();
     if (!pathParts.isEmpty()) result.environment["PATH"] = pathParts.join(';');
+    auto commandProcessor = inherited.value("COMSPEC");
+    if (commandProcessor.isEmpty()) commandProcessor = inherited.value("SYSTEMROOT") + "\\System32\\cmd.exe";
+    commandProcessor = runner_.resolveExecutable(commandProcessor, {});
+    const auto activation = spec.value("activationScript").toString().trimmed();
     if (spec.value("mode") == "shell") {
-        auto commandProcessor = inherited.value("COMSPEC");
-        if (commandProcessor.isEmpty()) commandProcessor = inherited.value("SYSTEMROOT") + "\\System32\\cmd.exe";
-        result.program = runner_.resolveExecutable(commandProcessor, {});
-        result.shellCommandLine = "/D /S /C \"" + spec.value("script").toString() + '"';
+        result.program = commandProcessor;
+        auto script = spec.value("script").toString();
+        if (!activation.isEmpty()) script = "call " + quoteWindowsArgument(activation) + " && " + script;
+        result.shellCommandLine = "/D /S /C \"" + script + '"';
     } else {
-        result.program = runner_.resolveExecutable(spec.value("program").toString(), tools);
-        result.arguments = strings(spec.value("arguments").toArray());
+        const auto program = runner_.resolveExecutable(spec.value("program").toString(), tools);
+        const auto arguments = strings(spec.value("arguments").toArray());
+        if (activation.isEmpty()) {
+            result.program = program;
+            result.arguments = arguments;
+        } else {
+            result.program = commandProcessor;
+            result.shellCommandLine = QStringLiteral("/D /S /C \"call ") + quoteWindowsArgument(activation) + QStringLiteral(" && ") + windowsCommandLine(program, arguments) + '"';
+        }
     }
     return result;
 }
@@ -110,6 +121,8 @@ void TaskSupervisor::preflight(const QJsonObject &project, const Cancellation &c
             auto commandDirectory = spec.value("workingDirectory").toString();
             if (commandDirectory.trimmed().isEmpty()) commandDirectory = expandedTask.value("workingDirectory").toString();
             if (!QFileInfo(commandDirectory).isDir()) taskError("命令工作目录不存在：" + task.value("name").toString() + " / " + label + "：" + commandDirectory);
+            const auto activation = spec.value("activationScript").toString().trimmed();
+            if (!activation.isEmpty() && !QFileInfo(activation).isFile()) taskError("激活脚本不存在：" + task.value("name").toString() + " / " + label + "：" + activation);
         };
         for (const auto &spec : task.value("prepareCommands").toArray()) { cancel.check(); checkDirectory(spec.toObject(), spec.toObject().value("name").toString()); command(task, spec.toObject()); }
         const auto service = task.value("serviceCommand").toObject();

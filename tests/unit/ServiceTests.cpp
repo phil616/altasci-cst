@@ -66,6 +66,7 @@ public:
     QStringList events;
     QStringList workingDirectories;
     QStringList paths;
+    QStringList shellCommandLines;
     QList<std::shared_ptr<TestProcess>> services;
     QString failCommand;
     QString gitVersion = "git version 2.55.0.windows.1";
@@ -85,6 +86,7 @@ public:
         events.append("start:" + spec.program);
         workingDirectories.append(spec.workingDirectory);
         paths.append(spec.environment.value("PATH"));
+        shellCommandLines.append(spec.shellCommandLine);
         process->stopped = [this, name = spec.program] { events.append("stop:" + name); };
         if (spec.program.contains("prepare")) { process->alive = false; if (spec.program == failCommand) process->exit = 1; }
         else services.append(process);
@@ -145,6 +147,34 @@ private slots:
         QVERIFY_THROWS_EXCEPTION(std::runtime_error, supervisor.start(project(endpoint.serverPort()), "operation", cancel));
         QVERIFY(!runner.events.contains("start:second-serve"));
         supervisor.stop(); QVERIFY(supervisor.empty()); QCOMPARE(runner.events.last(), "stop:first-serve");
+    }
+    void activationScriptWrapsExecAndShellCommands() {
+        TestRunner runner; TestClock clock; Cancellation cancel;
+        TaskSupervisor supervisor(runner, clock, {});
+        auto taskObject = task("venv", 10, 0);
+        auto service = taskObject["serviceCommand"].toObject();
+        service["mode"] = "exec";
+        service["program"] = "python.exe";
+        service["arguments"] = QJsonArray{"-m", "app"};
+        service["workingDirectory"] = "C:/project/service";
+        service["activationScript"] = "C:/venv/Scripts/activate.bat";
+        service["timeoutMs"] = 0;
+        service["successExitCodes"] = QJsonArray{0};
+        taskObject["serviceCommand"] = service;
+        taskObject["prepareCommands"] = QJsonArray{};
+        const auto document = QJsonObject{{"schemaVersion", 1}, {"project", QJsonObject{
+            {"id", "test"}, {"source", QJsonObject{{"workingDirectory", "C:/project"}}},
+            {"toolDirectories", QJsonArray{}}, {"requiredPorts", QJsonArray{}},
+            {"tasks", QJsonArray{taskObject}},
+            {"settings", QJsonObject{{"portReclaimTimeoutMs", 1000}, {"maxAncestorEscalation", 8}}}
+        }}};
+        supervisor.start(document["project"].toObject(), "operation", cancel);
+        QVERIFY(!runner.shellCommandLines.isEmpty());
+        const auto line = runner.shellCommandLines.last();
+        QVERIFY(line.contains("call \"C:/venv/Scripts/activate.bat\""));
+        QVERIFY(line.contains("\"python.exe\""));
+        QVERIFY(line.contains("\"-m\"") && line.contains("\"app\""));
+        supervisor.stop();
     }
     void shellCommandsReceiveToolDirectoriesOnPath() {
         TestRunner runner; TestClock clock; Cancellation cancel;

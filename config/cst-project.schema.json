@@ -217,6 +217,10 @@
         "workingDirectory": {
           "type": "string",
           "maxLength": 1024
+        },
+        "activationScript": {
+          "type": "string",
+          "maxLength": 1024
         }
       }
     },

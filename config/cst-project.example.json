@@ -57,7 +57,8 @@
             "successExitCodes": [
               0
             ],
-            "workingDirectory": "{{PROJECT_DIR}}\\backend"
+            "workingDirectory": "{{PROJECT_DIR}}\\backend",
+            "activationScript": ""
           }
         ],
         "serviceCommand": {
@@ -78,7 +79,8 @@
           "successExitCodes": [
             0
           ],
-          "workingDirectory": "{{PROJECT_DIR}}\\backend"
+          "workingDirectory": "{{PROJECT_DIR}}\\backend",
+          "activationScript": ""
         },
         "restartPolicy": {
           "mode": "on_failure",
@@ -112,7 +114,8 @@
             "successExitCodes": [
               0
             ],
-            "workingDirectory": "{{PROJECT_DIR}}\\frontend"
+            "workingDirectory": "{{PROJECT_DIR}}\\frontend",
+            "activationScript": ""
           }
         ],
         "serviceCommand": {
@@ -124,7 +127,8 @@
           "successExitCodes": [
             0
           ],
-          "workingDirectory": "{{PROJECT_DIR}}\\frontend"
+          "workingDirectory": "{{PROJECT_DIR}}\\frontend",
+          "activationScript": ""
         },
         "restartPolicy": {
           "mode": "on_failure",

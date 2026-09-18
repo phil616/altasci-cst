@@ -12,6 +12,22 @@
 
 开发构建未签名。应用必须获得管理员和调试权限。项目配置中的命令会以提升权限执行；测试时使用专用测试项目和端口。不要把正在开发的工作目录作为同步目标：同步会完全替换本地副本。
 
+### Python venv / 环境激活
+
+每条命令都支持可选的 `activationScript`，用于先激活 Windows 批处理环境，再执行该命令。对于 Python venv：
+
+```json
+{
+  "workingDirectory": "{{PROJECT_DIR}}",
+  "activationScript": "{{PROJECT_DIR}}\\.venv\\Scripts\\activate.bat",
+  "mode": "exec",
+  "program": "python.exe",
+  "arguments": ["-m", "app"]
+}
+```
+
+`prepareCommands` 和 `serviceCommand` 是独立进程，激活不会自动跨命令继承；每条需要虚拟环境的命令都要配置自己的 `activationScript`。更稳妥的替代方案是直接使用虚拟环境解释器绝对路径，例如 `program`: `{{PROJECT_DIR}}\\.venv\\Scripts\\python.exe`，此时无需激活。
+
 ## 配置保存策略
 
 配置保存采用“草稿宽松、运行严格”的模式：项目可以只有 ID 和名称，源码仓库、任务、端口、用户入口等字段可以暂时为空并正常保存。工作目录属于命令级：`prepareCommands` 和 `serviceCommand` 各自设置 `workingDirectory`，同一任务的不同命令可以使用不同目录；旧版任务级 `workingDirectory` 会在加载/导入时迁移到各命令。启动项目时再校验运行必需的字段；同步代码时再校验仓库、分支、源码目录和 Git 路径。长期服务命令创建成功即进入 Running，不要求绑定端口或通过就绪探针；`requiredPorts` 只用于启动前端口占用检查和强制释放。服务命令启动后 1500 ms 内退出会按启动失败立即停止项目并在日志中给出命令、工作目录和退出状态，不再进行无效重启循环；稳定运行后的意外退出才按 `restartPolicy` 重启。不完整草稿不会再被保存或导入流程拒绝。
