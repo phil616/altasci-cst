@@ -1,4 +1,5 @@
 #include "application/RuntimeClient.h"
+#include "../TestCompatibility.h"
 #include <QTest>
 #include <QTemporaryDir>
 #include <QLockFile>
@@ -35,7 +36,7 @@ private slots:
         QJsonObject project{{"id", "fixture"}, {"tasks", QJsonArray{QJsonObject{{"id", "prepare"}, {"kind", "task"}, {"serviceCommand", command}}}}};
         client.preflight(project, cancel);
         cancel.requested.store(true);
-        QVERIFY_EXCEPTION_THROWN(client.start(project, "cancelled-run", cancel), Cancelled);
+        QVERIFY_THROWS_EXCEPTION(Cancelled, client.start(project, "cancelled-run", cancel));
         client.stop(); QVERIFY(client.empty());
     }
 };

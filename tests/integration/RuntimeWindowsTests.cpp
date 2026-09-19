@@ -51,7 +51,7 @@ private slots:
         write(dir.filePath("pyproject.toml"), "[project]\nname='cst-fixture'\nversion='0.0.0'\nrequires-python='>=3.12'\n");
         auto plan = planner.resolve({}, {}, {{"mode", "uv"}, {"program", uv_}, {"workingDirectory", dir.path()}, {"toolArguments", QJsonArray{"--python", python_}}, {"arguments", QJsonArray{"python", "-c", "import sys;print('UV_PREFIX='+sys.prefix)"}}}, "uv");
         const auto output = execute(runner, plan); QVERIFY(output.contains("UV_PREFIX=")); QVERIFY(output.contains(".venv"));
-        write(dir.filePath("package.json"), R"({"name":"cst-fixture","version":"0.0.0","scripts":{"precheck":"node -e \"console.log('PRE')\"","check":"node check.cjs","postcheck":"node -e \"console.log('POST')\""}})");
+        write(dir.filePath("package.json"), "{\"name\":\"cst-fixture\",\"version\":\"0.0.0\",\"scripts\":{\"precheck\":\"node -e \\\"console.log('PRE')\\\"\",\"check\":\"node check.cjs\",\"postcheck\":\"node -e \\\"console.log('POST')\\\"\"}}");
         write(dir.filePath("check.cjs"), "console.log('NPM_ARG='+JSON.stringify(process.argv.slice(2)));console.log('BIN='+process.env.PATH.includes('node_modules'));\n");
         plan = planner.resolve({}, {}, {{"mode", "npm"}, {"program", node_}, {"workingDirectory", dir.path()}, {"script", "check"}, {"arguments", QJsonArray{"hello world"}}}, "npm");
         const auto npm = execute(runner, plan); QVERIFY(npm.contains("PRE")); QVERIFY(npm.contains("POST")); QVERIFY(npm.contains("hello world")); QVERIFY(npm.contains("BIN=true"));

@@ -1,5 +1,6 @@
 #include "application/LaunchPlanner.h"
 #include "application/ProjectConfigService.h"
+#include "../TestCompatibility.h"
 #include <QTest>
 #include <QTemporaryDir>
 #include <QFile>
@@ -46,15 +47,15 @@ private slots:
         QTemporaryDir dir; RecordingRunner runner; LaunchPlanner planner(runner, {});
         const auto task = QJsonObject{{"environment", QJsonObject{{"envFiles", QJsonArray{dir.filePath("generated.env")}}}}};
         const auto command = QJsonObject{{"program", "tool.exe"}};
-        QVERIFY_EXCEPTION_THROWN(planner.resolve({}, task, command, "run"), std::runtime_error);
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, planner.resolve({}, task, command, "run"));
         QFile file(dir.filePath("generated.env")); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("PATH=C:/generated\n"); file.close();
         const auto plan = planner.resolve({}, task, command, "run"); QCOMPARE(plan.environment.value("PATH"), "C:/generated");
     }
     void profileCycleAndLegacyMetacharactersRejected() {
         RecordingRunner runner; LaunchPlanner planner(runner, {});
         QJsonObject project{{"environments", QJsonObject{{"a", QJsonObject{{"extends", "a"}}}}}};
-        QVERIFY_EXCEPTION_THROWN(planner.resolve(project, {{"environmentRef", "a"}}, {{"program", "x"}}, "run"), std::runtime_error);
-        QVERIFY_EXCEPTION_THROWN(planner.resolve({}, {}, {{"mode", "exec"}, {"program", "python"}, {"activationScript", "C:/activate.bat"}, {"arguments", QJsonArray{"%PATH%"}}}, "run"), std::runtime_error);
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, planner.resolve(project, {{"environmentRef", "a"}}, {{"program", "x"}}, "run"));
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, planner.resolve({}, {}, {{"mode", "exec"}, {"program", "python"}, {"activationScript", "C:/activate.bat"}, {"arguments", QJsonArray{"%PATH%"}}}, "run"));
     }
 };
 QTEST_GUILESS_MAIN(LaunchTests)
