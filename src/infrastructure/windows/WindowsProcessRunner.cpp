@@ -62,6 +62,14 @@ public:
             if (FAILED(status)) win::fail("CreatePseudoConsole", static_cast<DWORD>(status));
             if (!UpdateProcThreadAttribute(attributes.get(), 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
                                            console_.value, sizeof(HPCON), nullptr, nullptr)) win::fail("Pseudoconsole attribute");
+            // The pseudoconsole owns the child's standard handles. Without STARTF_USESTDHANDLES the child
+            // inherits this process' handles instead whenever the host runs with redirected stdio (the test
+            // runner, or any cst.exe started with a shell redirection), so the shell never talks to the
+            // terminal. Declaring the handles invalid makes Windows bind them to the pseudoconsole.
+            startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+            startup.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
+            startup.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
+            startup.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
             stderrDone_.store(true);
         } else {
             pipe(stderr_, errWrite);
