@@ -20,13 +20,35 @@ bool cancelled(std::exception_ptr error) {
 }
 }
 ProjectRuntimeService::ProjectRuntimeService(ProjectConfigService &configuration, ProjectCatalogService &catalog,
-    TaskSupervisor &supervisor, PortReclaimService &ports, SourceSyncService &sync, QObject *parent)
+    ITaskSupervisor &supervisor, PortReclaimService &ports, SourceSyncService &sync, QObject *parent)
     : QObject(parent), configuration_(configuration), catalog_(catalog), supervisor_(supervisor), ports_(ports), sync_(sync),
-      queue_(this), cancel_(std::make_shared<Cancellation>()) {
+      queue_(this), inputQueue_(this), cancel_(std::make_shared<Cancellation>()) {
     qRegisterMetaType<ProjectState>(); qRegisterMetaType<TaskStatus>(); qRegisterMetaType<ProcessOutput>();
     connect(&queue_, &OperationQueue::busyChanged, this, [this] { emit availabilityChanged(); });
     supervisor_.taskChanged = [this](const TaskStatus &task) { emit taskChanged(task); };
-    supervisor_.output = [this](const QString &id, ProcessOutput output) { emit processOutput(id, std::move(output)); };
+    supervisor_.output = [this](const QString &id, ProcessOutput output) {
+        std::lock_guard lock(outputMutex_);
+        outputBytes_ += output.bytes.size() + output.text.size() * 2 + 1024;
+        pendingOutput_.emplace_back(id, std::move(output));
+        while (outputBytes_ > 8 * 1024 * 1024 && !pendingOutput_.empty()) {
+            const auto &item = pendingOutput_.front().second;
+            outputBytes_ -= item.bytes.size() + item.text.size() * 2 + 1024;
+            pendingOutput_.pop_front(); ++droppedOutput_;
+        }
+    };
+    connect(&outputTimer_, &QTimer::timeout, this, [this] {
+        std::deque<std::pair<QString, ProcessOutput>> batch; quint64 dropped = 0;
+        { std::lock_guard lock(outputMutex_); qsizetype count = 0;
+          while (!pendingOutput_.empty() && count < 256 * 1024) {
+              const auto &item = pendingOutput_.front().second;
+              const auto size = item.bytes.size() + item.text.size() * 2 + 1024;
+              count += size; outputBytes_ -= size; batch.push_back(std::move(pendingOutput_.front())); pendingOutput_.pop_front();
+          }
+          dropped = std::exchange(droppedOutput_, 0);
+        }
+        if (dropped) emit processOutput({}, {"gap", "界面输出缓冲已满，丢弃 " + QString::number(dropped) + " 块", false, QDateTime::currentDateTimeUtc()});
+        for (auto &item : batch) emit processOutput(item.first, std::move(item.second));
+    }); outputTimer_.start(33);
     connect(this, &ProjectRuntimeService::taskChanged, this, [this](const TaskStatus &task) { taskStatuses_[task.id] = task; }, Qt::QueuedConnection);
     monitor_.setInterval(100);
     connect(&monitor_, &QTimer::timeout, this, [this] {
@@ -39,7 +61,7 @@ ProjectRuntimeService::ProjectRuntimeService(ProjectConfigService &configuration
     monitor_.start();
 }
 ProjectRuntimeService::~ProjectRuntimeService() {
-    cancel_->requested.store(true); queue_.join();
+    cancel_->requested.store(true); inputQueue_.join(); queue_.join();
     supervisor_.taskChanged = {}; supervisor_.output = {};
     try { supervisor_.stop(); } catch (...) { /* Job owners still enforce kill-on-close during destruction. */ }
 }
@@ -100,9 +122,11 @@ void ProjectRuntimeService::start() {
             const auto issues = configuration_.validateForRun(document); if (!issues.isEmpty()) throw ConfigurationError(issues);
             cancel->check();
             if (storageDirectory_.isEmpty() || !QDir().mkpath(storageDirectory_ + "/locks")) throw std::runtime_error("项目数据目录未初始化");
+            if (!supervisor_.ownsProjectLock()) {
             projectLock_ = std::make_unique<QLockFile>(storageDirectory_ + "/locks/" + project.value("id").toString() + ".lock");
             projectLock_->setStaleLockTime(0);
             if (!projectLock_->tryLock(0)) throw std::runtime_error("另一个 CST 操作正在使用该项目");
+            }
             const auto target = project.value("source").toObject().value("workingDirectory").toString();
             if (!target.trimmed().isEmpty() && !QFileInfo(target).isDir()) throw std::runtime_error("源码目录不存在；请先同步代码");
             supervisor_.preflight(project, *cancel);
@@ -110,8 +134,9 @@ void ProjectRuntimeService::start() {
             const auto settings = project.value("settings").toObject();
             const auto portReclaimTimeoutMs = settings.contains("portReclaimTimeoutMs") ? settings.value("portReclaimTimeoutMs").toInt() : 15000;
             const auto maxAncestorEscalation = settings.contains("maxAncestorEscalation") ? settings.value("maxAncestorEscalation").toInt() : 8;
-            ports_.reclaim(PortReclaimService::requirements(project.value("requiredPorts").toArray()),
-                portReclaimTimeoutMs, maxAncestorEscalation, {}, *cancel);
+            const auto requirements = PortReclaimService::requirements(project.value("requiredPorts").toArray());
+            if (settings.value("portPolicy").toString("reclaimConfigured") == "fail") ports_.requireFree(requirements);
+            else ports_.reclaim(requirements, portReclaimTimeoutMs, maxAncestorEscalation, {}, *cancel);
             cancel->check(); queue_.post([this] { event(RuntimeEvent::PortsFree); }); stage = Stage::Tasks;
             supervisor_.start(project, operationId, *cancel);
             cancel->check(); *empty = supervisor_.empty();
@@ -134,8 +159,24 @@ void ProjectRuntimeService::start() {
         if (*failure) {
             if (state_ == ProjectState::Stopping && jobsEmpty_) event(RuntimeEvent::JobsEmpty, !cancelled(*failure));
             if (cancelled(*failure)) finish({}, "启动已取消"); else finish(*failure, {});
-        } else { event(RuntimeEvent::TasksReady); finish({}, "项目已运行"); }
+        } else {
+            event(RuntimeEvent::TasksReady);
+            if (jobsEmpty_) { event(RuntimeEvent::Stop); event(RuntimeEvent::JobsEmpty); projectLock_.reset(); finish({}, "所有一次性任务已完成"); }
+            else finish({}, "项目已运行（就绪状态见各任务）");
+        }
     });
+}
+void ProjectRuntimeService::writeInput(const QString &task, const QByteArray &bytes) {
+    if (closing_ || bytes.isEmpty() || inputBytes_ + bytes.size() > 65536) return;
+    inputBytes_ += bytes.size();
+    inputQueue_.enqueue({}, [this, task, bytes] { supervisor_.writeInput(task, bytes); }, [this, size = bytes.size()](std::exception_ptr error) {
+        inputBytes_ -= size;
+        if (error) emit operationFinished(exceptionText(error), false);
+    });
+}
+void ProjectRuntimeService::resizeTerminal(const QString &task, int columns, int rows) {
+    if (closing_ || inputQueue_.busy()) return;
+    inputQueue_.enqueue({}, [this, task, columns, rows] { supervisor_.resizeTerminal(task, columns, rows); }, [](std::exception_ptr) {});
 }
 void ProjectRuntimeService::stop() {
     cancel_->requested.store(true);

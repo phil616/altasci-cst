@@ -26,6 +26,7 @@ QString DiagnosticExportService::run(const QString &program, const QStringList &
             if (clock_.monotonicMs() >= deadline) throw std::runtime_error("诊断工具执行超时");
             clock_.sleep(25, cancel);
         }
+        process->forceStop();
         const auto result = process->result();
         if (!result || result->crashed || result->exitCode != 0) throw std::runtime_error("诊断工具失败");
     } catch (...) { process->forceStop(); throw; }

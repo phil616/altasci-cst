@@ -1,4 +1,4 @@
-# Customer Service Terminal（CST）完整技术方案
+# Customer Service Terminal（CST）v1 技术方案（历史记录）
 
 文档版本：1.0  
 基准日期：2026-09-17  
@@ -6,7 +6,9 @@
 实现语言：C++20  
 UI 框架：Qt Widgets 6.11.2  
 
-> 本文是实现规范，不是选型建议。本文中的技术栈、状态、行为、目录、接口和验收条件均为确定性要求。随附的 `cst-project.schema.json` 与 `cst-project.example.json` 是本文的一部分。
+> Runtime v2 已按用户后续要求重设计。启动、环境、任务、权限、进程分离、Console、日志和配置兼容行为以 [Runtime v2 实现说明](docs/runtime-v2.md) 为准；下文保留 v1 历史背景，不再约束这些已替换部分。
+
+> v1 原文：本文是实现规范，不是选型建议。本文中的技术栈、状态、行为、目录、接口和验收条件均为确定性要求。随附的 `cst-project.schema.json` 与 `cst-project.example.json` 是本文的一部分。
 
 ## 0. 给 Codex 的执行契约
 

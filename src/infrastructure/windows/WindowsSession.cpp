@@ -7,6 +7,7 @@
 #include <QLocalSocket>
 #include <QOperatingSystemVersion>
 #include <QSysInfo>
+#include <QFileInfo>
 
 namespace cst {
 class WindowsSession::Implementation {
@@ -47,7 +48,9 @@ bool WindowsSession::nativeEventFilter(const QByteArray &,void *message,qintptr 
 ProjectPaths WindowsSession::paths(){
     const auto folder=[](REFKNOWNFOLDERID id){wchar_t *value=nullptr;const auto result=SHGetKnownFolderPath(id,KF_FLAG_DEFAULT,nullptr,&value);if(FAILED(result))win::fail("SHGetKnownFolderPath",static_cast<DWORD>(result));const auto path=QString::fromWCharArray(value);CoTaskMemFree(value);return path;};
     wchar_t windows[MAX_PATH+1]{};const auto length=GetWindowsDirectoryW(windows,MAX_PATH+1);if(!length||length>MAX_PATH)win::fail("GetWindowsDirectory");
-    return {folder(FOLDERID_ProgramFiles)+"\\CST",folder(FOLDERID_ProgramData)+"\\CST",QString::fromWCharArray(windows)};
+    const auto legacy = folder(FOLDERID_ProgramData) + "\\CST";
+    const auto storage = QFileInfo::exists(legacy + "/catalog.json") ? legacy : folder(FOLDERID_LocalAppData) + "\\CST";
+    return {folder(FOLDERID_ProgramFiles)+"\\CST", storage, QString::fromWCharArray(windows)};
 }
 void WindowsSession::requireSupportedWindows(){
     const auto version=QOperatingSystemVersion::current();

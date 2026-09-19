@@ -359,7 +359,7 @@ ValidationIssues ConfigurationValidator::validate(const QJsonObject &document) c
         for (const auto &file : env.value("envFiles").toArray()) {
             if (!nonEmpty(file.toString())) continue;
             const auto envPath = absolute(file.toString(), path + "environment/envFiles", true);
-            if (nonEmpty(envPath) && !isWithinWindowsPath(envPath, paths_.dataDirectory(projectId)))
+            if (document.value("schemaVersion").toInt() == 1 && nonEmpty(envPath) && !isWithinWindowsPath(envPath, paths_.dataDirectory(projectId)))
                 fail(path + "environment/envFiles", "环境文件必须位于项目数据目录");
         }
         const auto envVariables = env.value("variables").toObject();
@@ -379,14 +379,17 @@ ValidationIssues ConfigurationValidator::validate(const QJsonObject &document) c
                 unique(commandIds, commandId, cp + "id");
             }
             const auto commandDirectory = command.value("workingDirectory").toString().trimmed();
-            if (nonEmpty(commandDirectory)) absolute(commandDirectory, cp + "workingDirectory", true);
+            if (nonEmpty(commandDirectory)) {
+                const auto cwd = expanded(commandDirectory, cp + "workingDirectory");
+                if (!isWindowsAbsolutePath(cwd) && directory.isEmpty()) fail(cp + "workingDirectory", "相对工作目录需要项目源码目录");
+            }
             const auto activation = command.value("activationScript").toString().trimmed();
             if (nonEmpty(activation)) absolute(activation, cp + "activationScript", true);
             const auto mode = command.value("mode").toString();
             if (command.contains("timeoutMs")) {
                 const auto timeout = command.value("timeoutMs").toInt();
-                if (service && timeout != 0) fail(cp + "timeoutMs", "服务超时必须为 0");
-                if (!service && timeout <= 0) fail(cp + "timeoutMs", "准备命令超时必须大于 0");
+                if (service && task.value("kind").toString() != "task" && timeout != 0) fail(cp + "timeoutMs", "服务超时必须为 0");
+                if ((!service || task.value("kind").toString() == "task") && timeout <= 0) fail(cp + "timeoutMs", "准备命令超时必须大于 0");
             }
             if (mode == "exec") {
                 if (command.contains("script") && nonEmpty(command.value("script").toString())) fail(cp + "script", "exec 模式不能配置脚本");
@@ -395,7 +398,7 @@ ValidationIssues ConfigurationValidator::validate(const QJsonObject &document) c
                     const auto expandedProgram = expanded(program, cp + "program");
                     if (expandedProgram.endsWith(".cmd", Qt::CaseInsensitive) || expandedProgram.endsWith(".bat", Qt::CaseInsensitive))
                         fail(cp + "program", "批处理必须使用 shell 模式");
-                    if ((expandedProgram.contains('/') || expandedProgram.contains('\\') || expandedProgram.contains(':')) && !isWindowsAbsolutePath(expandedProgram))
+                    if (expandedProgram.contains(':') && !isWindowsAbsolutePath(expandedProgram))
                         fail(cp + "program", "带目录的程序路径必须是绝对路径");
                 }
                 for (const auto &arg : command.value("arguments").toArray())
@@ -457,53 +460,56 @@ ValidationIssues ConfigurationValidator::validateForRun(const QJsonObject &docum
         const auto path = "tasks/" + QString::number(i) + '/';
         if (!nonEmpty(task.value("id").toString())) fail(path + "id", "任务标识不能为空");
         if (!nonEmpty(task.value("name").toString())) fail(path + "name", "任务名称不能为空");
-        const auto service = task.value("serviceCommand").toObject();
-        const auto servicePath = path + "serviceCommand/";
-        if (service.isEmpty()) {
-            fail(path + "serviceCommand", "必须配置长期服务命令");
-        } else {
-            if (!nonEmpty(service.value("workingDirectory").toString())) fail(servicePath + "workingDirectory", "服务命令工作目录不能为空");
-            const auto mode = service.value("mode").toString();
-            if (mode == "exec") {
-                if (!nonEmpty(service.value("program").toString())) fail(servicePath + "program", "必须配置程序");
-                if (!service.contains("timeoutMs") || service.value("timeoutMs").toInt() != 0) fail(servicePath + "timeoutMs", "服务超时必须为 0");
-                if (service.value("successExitCodes").toArray().isEmpty()) fail(servicePath + "successExitCodes", "至少配置一个成功退出码");
-            } else if (mode == "shell") {
-                if (!nonEmpty(service.value("script").toString())) fail(servicePath + "script", "必须配置脚本");
-                if (!service.contains("timeoutMs") || service.value("timeoutMs").toInt() != 0) fail(servicePath + "timeoutMs", "服务超时必须为 0");
-                if (service.value("successExitCodes").toArray().isEmpty()) fail(servicePath + "successExitCodes", "至少配置一个成功退出码");
-            } else {
-                fail(servicePath + "mode", "必须选择 exec 或 shell");
-            }
-        }
-        const auto prepares = task.value("prepareCommands").toArray();
-        for (qsizetype j = 0; j < prepares.size(); ++j) {
-            const auto command = prepares[j].toObject();
-            const auto cp = path + "prepareCommands/" + QString::number(j) + '/';
-            if (!nonEmpty(command.value("workingDirectory").toString())) fail(cp + "workingDirectory", "准备命令工作目录不能为空");
+        auto commands = task.value("prepareCommands").toArray();
+        const auto prepareCount = commands.size();
+        commands.append(task.value("serviceCommand"));
+        for (qsizetype j = 0; j < commands.size(); ++j) {
+            const auto command = commands[j].toObject();
+            const auto cp = path + (j == prepareCount ? QString("serviceCommand/") : "prepareCommands/" + QString::number(j) + '/');
+            if (command.isEmpty()) { fail(cp, "必须配置执行命令"); continue; }
+            if (!nonEmpty(command.value("workingDirectory").toString())) fail(cp + "workingDirectory", "命令工作目录不能为空");
             const auto mode = command.value("mode").toString();
-            const auto timeout = command.value("timeoutMs").toInt();
-            if (mode == "exec") {
-                if (!nonEmpty(command.value("program").toString())) fail(cp + "program", "必须配置程序");
-                if (!command.contains("timeoutMs") || timeout <= 0) fail(cp + "timeoutMs", "准备命令超时必须大于 0");
-                if (command.value("successExitCodes").toArray().isEmpty()) fail(cp + "successExitCodes", "至少配置一个成功退出码");
-            } else if (mode == "shell") {
-                if (!nonEmpty(command.value("script").toString())) fail(cp + "script", "必须配置脚本");
-                if (!command.contains("timeoutMs") || timeout <= 0) fail(cp + "timeoutMs", "准备命令超时必须大于 0");
-                if (command.value("successExitCodes").toArray().isEmpty()) fail(cp + "successExitCodes", "至少配置一个成功退出码");
-            } else {
-                fail(cp + "mode", "必须选择 exec 或 shell");
-            }
+            if (!QStringList{"exec", "shell", "python-venv", "uv", "npm"}.contains(mode)) fail(cp + "mode", "请选择运行方式");
+            if (mode == "exec" && !nonEmpty(command.value("program").toString())) fail(cp + "program", "必须配置程序");
+            if ((mode == "shell" || (mode == "npm" && command.value("npmAction").toString("run") == "run")) && !nonEmpty(command.value("script").toString())) fail(cp + "script", "必须配置脚本");
+            if (mode == "python-venv" && !nonEmpty(command.value("venv").toString())) fail(cp + "venv", "必须配置虚拟环境目录");
+            if (mode == "uv" && command.value("arguments").toArray().isEmpty()) fail(cp + "arguments", "uv run 需要目标命令参数");
+            if (!command.value("activationScript").toString().isEmpty() && mode != "exec" && mode != "shell") fail(cp + "activationScript", "工具模式不使用激活脚本");
+            const bool finite = j < prepareCount || task.value("kind").toString() == "task";
+            if (finite && command.value("timeoutMs").toInt() <= 0) fail(cp + "timeoutMs", "一次性命令需要正数超时");
+            if (!finite && command.value("timeoutMs").toInt() != 0) fail(cp + "timeoutMs", "服务超时必须为 0");
+            if (command.value("successExitCodes").toArray().isEmpty()) fail(cp + "successExitCodes", "至少配置一个成功退出码");
         }
-        const auto restart = task.value("restartPolicy").toObject();
-        if (restart.isEmpty()) fail(path + "restartPolicy", "必须配置重启策略");
-        else {
-            const auto rp = path + "restartPolicy/";
-            if (!restart.contains("mode") || restart.value("mode").toString() != "on_failure") fail(rp + "mode", "重启策略模式必须为 on_failure");
-            if (restart.value("maxRestarts").toInt() <= 0) fail(rp + "maxRestarts", "最大重启次数必须大于 0");
-            if (restart.value("windowSeconds").toInt() <= 0) fail(rp + "windowSeconds", "统计窗口必须大于 0");
-            if (restart.value("backoffSeconds").toInt() <= 0) fail(rp + "backoffSeconds", "初始退避必须大于 0");
-            if (restart.value("maxBackoffSeconds").toInt() <= 0) fail(rp + "maxBackoffSeconds", "最大退避必须大于 0");
+        const auto probe = task.value("readiness").toObject();
+        if (probe.value("type").toString() == "tcp" && (probe.value("host").toString().isEmpty() || probe.value("port").toInt() < 1)) fail(path + "readiness", "TCP 就绪检查需要主机和端口");
+        if (probe.value("type").toString() == "http" && !isAllowedUrl(probe.value("url").toString())) fail(path + "readiness", "HTTP 就绪检查需要 HTTP(S) URL");
+        if (task.value("kind").toString() == "task" && !probe.isEmpty() && probe.value("type").toString() != "none") fail(path + "readiness", "一次性任务不配置就绪检查");
+
+    }
+    QMap<QString, QJsonObject> byId;
+    for (const auto &item : tasks) byId[item.toObject().value("id").toString()] = item.toObject();
+    QSet<QString> visiting, done;
+    const auto visit = [&](auto &&self, const QString &id) -> void {
+        if (done.contains(id)) return;
+        if (visiting.contains(id)) { fail("tasks", "任务依赖循环：" + id); return; }
+        visiting.insert(id);
+        for (const auto &value : byId.value(id).value("dependsOn").toArray()) {
+            const auto dep = value.toObject(); const auto target = dep.value("task").toString();
+            if (!byId.contains(target)) { fail("tasks", "依赖任务不存在：" + target); continue; }
+            const auto other = byId.value(target);
+            if (dep.value("condition") == "completed" && other.value("kind").toString() != "task") fail("tasks", "completed 依赖必须指向一次性任务");
+            if (dep.value("condition") == "ready" && (other.value("kind").toString() == "task" || other.value("readiness").toObject().value("type").toString("none") == "none")) fail("tasks", "ready 依赖需要服务就绪检查");
+            self(self, target);
+        }
+        visiting.remove(id); done.insert(id);
+    };
+    for (auto it = byId.begin(); it != byId.end(); ++it) visit(visit, it.key());
+    const auto profiles = project.value("environments").toObject();
+    for (const auto &item : tasks) {
+        auto ref = item.toObject().value("environmentRef").toString(); QSet<QString> seen;
+        while (!ref.isEmpty()) {
+            if (seen.contains(ref) || !profiles.value(ref).isObject()) { fail("environments", "环境引用不存在或循环：" + ref); break; }
+            seen.insert(ref); ref = profiles.value(ref).toObject().value("extends").toString();
         }
     }
     return issues;

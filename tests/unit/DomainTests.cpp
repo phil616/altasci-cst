@@ -48,7 +48,8 @@ private slots:
     }
     void schemaMutations() {
         auto document = example_; document["unknown"] = true; QVERIFY(!validate(document).isEmpty());
-        document = example_; document["schemaVersion"] = 2; QVERIFY(!validate(document).isEmpty());
+        document = example_; document["schemaVersion"] = 2; QVERIFY(validate(document).isEmpty());
+        document["schemaVersion"] = 3; QVERIFY(!validate(document).isEmpty());
         document = example_; document.remove("project"); QVERIFY(!validate(document).isEmpty());
         QVERIFY(!validate(changedTask("order", 1.5)).isEmpty());
         QVERIFY(!validate(changedTask("order", -1)).isEmpty());
@@ -61,7 +62,7 @@ private slots:
         service["timeoutMs"] = 0; service["program"] = "npm.CMD"; QVERIFY(!validate(changedTask("serviceCommand", service)).isEmpty());
         service["program"] = "uv.exe"; service["successExitCodes"] = QJsonArray{0, 0}; QVERIFY(!validate(changedTask("serviceCommand", service)).isEmpty());
         QVERIFY(!validate(changedServiceDirectory("{{UNKNOWN}}\\x")).isEmpty());
-        QVERIFY(!validate(changedServiceDirectory("relative\\x")).isEmpty());
+        QVERIFY(validate(changedServiceDirectory("relative\\x")).isEmpty());
         auto env = task["environment"].toObject(); env["variables"] = QJsonObject{{"export A", "x"}};
         QVERIFY(!validate(changedTask("environment", env)).isEmpty());
     }

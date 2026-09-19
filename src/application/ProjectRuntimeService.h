@@ -6,13 +6,15 @@
 #include "TaskSupervisor.h"
 #include <QTimer>
 #include <QLockFile>
+#include <deque>
+#include <mutex>
 
 namespace cst {
 class ProjectRuntimeService final : public QObject {
     Q_OBJECT
 public:
     ProjectRuntimeService(ProjectConfigService &configuration, ProjectCatalogService &catalog,
-                          TaskSupervisor &supervisor, PortReclaimService &ports, SourceSyncService &sync,
+                          ITaskSupervisor &supervisor, PortReclaimService &ports, SourceSyncService &sync,
                           QObject *parent = nullptr);
     ~ProjectRuntimeService() override;
     ProjectState state() const;
@@ -25,6 +27,8 @@ public:
     void initialize(const QString &storageDirectory);
     void setEditing(bool editing);
     void start();
+    void writeInput(const QString &task, const QByteArray &bytes);
+    void resizeTerminal(const QString &task, int columns, int rows);
     void stop();
     void synchronize();
     void close();
@@ -53,10 +57,17 @@ private:
     QString newOperation();
     ProjectConfigService &configuration_;
     ProjectCatalogService &catalog_;
-    TaskSupervisor &supervisor_;
+    ITaskSupervisor &supervisor_;
     PortReclaimService &ports_;
     SourceSyncService &sync_;
     OperationQueue queue_;
+    OperationQueue inputQueue_;
+    QTimer outputTimer_;
+    std::mutex outputMutex_;
+    std::deque<std::pair<QString, ProcessOutput>> pendingOutput_;
+    qsizetype outputBytes_ = 0;
+    qsizetype inputBytes_ = 0;
+    quint64 droppedOutput_ = 0;
     QTimer monitor_;
     QJsonObject current_;
     ProjectState state_ = ProjectState::Stopped;

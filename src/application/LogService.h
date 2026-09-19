@@ -2,6 +2,7 @@
 #include "Platform.h"
 #include <QObject>
 #include <QThread>
+#include <atomic>
 
 namespace cst {
 class LogService final : public QObject {
@@ -11,7 +12,7 @@ public:
     ~LogService() override;
     void write(QString projectId, QString taskId, QString operationId, QString event, QString message,
                QString level = "info", QString channel = {}, bool decodeError = false,
-               QDateTime timestamp = QDateTime::currentDateTimeUtc());
+               QDateTime timestamp = QDateTime::currentDateTimeUtc(), QString attemptId = {});
     void addSecret(const QString &secret);
     void flush();
     static QJsonValue redactJson(const QJsonValue &value);
@@ -24,5 +25,7 @@ private:
     QStringList secrets_;
     QThread thread_;
     QObject *writer_;
+    std::atomic<qint64> queuedBytes_{0};
+    std::atomic_bool overflow_{false};
 };
 }

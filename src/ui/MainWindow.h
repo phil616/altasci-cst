@@ -3,6 +3,8 @@
 #include "pages/user/UserPage.h"
 #include <QLabel>
 #include <QMainWindow>
+#include <QDialog>
+#include "widgets/TerminalView.h"
 
 namespace cst {
 class MainWindow final : public QMainWindow {
@@ -27,5 +29,9 @@ private:
     QWidget *central_;
     QLabel *closingOverlay_;
     bool mayClose_ = false;
+    struct Console { QDialog *window; TerminalView *view; QLabel *status; QString attempt; bool terminal = false; };
+    QMap<QString, Console> consoles_;
+    Console &console(const QString &task);
+    void openConsole(const QString &task);
 };
 }

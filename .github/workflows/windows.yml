@@ -2,7 +2,7 @@ name: Windows build and package
 
 on:
   push:
-    branches: [main]
+    branches: [main, runtime-v2]
   pull_request:
   workflow_dispatch:
 
@@ -49,6 +49,20 @@ jobs:
         with:
           path: C:/cst-tools
           key: cst-windows-qt6.11.2-ifw4.11.0-cmake4.4.3-git2.55.0-v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install runtime test tools
+        run: |
+          python -m pip install --disable-pip-version-check uv==0.12.17
+          if ($LASTEXITCODE -ne 0) { throw 'uv install failed' }
+          $python = python -c "import sys; print(sys.executable)"
+          $uv = python -c "import uv; print(uv.find_uv_bin())"
+          "CST_TEST_PYTHON=$python" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "CST_TEST_UV=$uv" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build, test and package
         run: cmake --workflow --preset windows-package
       - name: Print Qt test reports

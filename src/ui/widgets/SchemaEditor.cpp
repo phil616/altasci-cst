@@ -1,4 +1,6 @@
 #include "SchemaEditor.h"
+#include <QSet>
+#include <QInputDialog>
 #include "domain/Configuration.h"
 #include "ui/UiSupport.h"
 #include <QTabWidget>
@@ -47,6 +49,10 @@ QString fieldLabel(const QString &key) {
         {"maxBackoffSeconds", "最大退避（秒）"}, {"label", "按钮文字"}, {"availableWhen", "可用条件"},
         {"activationScript", "激活脚本"}, {"repositoryUrl", "HTTPS 仓库地址"}, {"branch", "分支"}, {"gitExecutable", "Git 可执行文件"},
         {"credentialTarget", "凭据名称"}, {"toolDirectories", "工具查找目录"}, {"portReclaimTimeoutMs", "端口释放超时（毫秒）"},
+        {"kind", "任务类型"}, {"lifetime", "存活范围"}, {"dependsOn", "依赖任务"}, {"condition", "依赖条件"}, {"task", "任务标识"},
+        {"venv", "虚拟环境目录"}, {"npmCli", "npm CLI 路径（可选）"}, {"npmAction", "npm 操作"}, {"toolArguments", "工具选项"},
+        {"io", "Console"}, {"stdin", "标准输入"}, {"encoding", "输出编码"}, {"environmentRef", "环境配置引用"}, {"extends", "继承环境"},
+        {"readiness", "就绪检查"}, {"host", "主机"}, {"portPolicy", "端口占用策略"}, {"resetAfterSeconds", "重启预算重置（秒）"},
         {"maxAncestorEscalation", "最多上溯层数"}};
     return labels.value(key, key);
 }
@@ -61,9 +67,9 @@ QString fieldHelp(const QString &key) {
         {"order","数值越小越先启动；停止时按相反顺序执行。"},
         {"workingDirectory","每个命令可以独立设置工作目录。使用绝对路径，或 {{PROJECT_DIR}} 等目录占位符。"},
         {"activationScript","可选。先调用此批处理脚本完成环境激活，例如 {{PROJECT_DIR}}\\.venv\\Scripts\\activate.bat，再执行本命令。"},
-        {"mode","exec 直接运行程序；shell 执行多行脚本。"},
+        {"mode","exec 原生程序；python-venv 环境解释器；uv 调用 uv run；npm 调用包脚本；shell 使用 cmd。"},
         {"program","填写可执行文件名或完整路径。参数在下方逐项添加。"},
-        {"arguments","每项代表一个参数，无需自行添加外层引号。列表顺序即传入顺序。"},
+        {"arguments","每项一个参数，无需外层引号。uv 模式填写目标命令及其参数，例如 python、-m、app。"},
         {"timeoutMs","单位为毫秒。长期服务使用 0；准备命令必须设置正数。"},
         {"repositoryUrl","填写 HTTPS Git 仓库地址；用户名和 PAT 在“环境与凭据”中保存。"},
         {"branch","同步此远程分支的最新完整代码。"},
@@ -82,8 +88,8 @@ QString fieldHelp(const QString &key) {
     return hints.value(key);
 }
 QString pathModeForKey(const QString &key) {
-    if (key == "workingDirectory" || key == "toolDirectories") return "directory";
-    if (key == "envFiles" || key == "gitExecutable" || key == "program" || key == "activationScript") return "file";
+    if (key == "workingDirectory" || key == "toolDirectories" || key == "venv") return "directory";
+    if (key == "envFiles" || key == "gitExecutable" || key == "program" || key == "activationScript" || key == "npmCli") return "file";
     return {};
 }
 QString summary(const QJsonValue &value) {
@@ -173,10 +179,10 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
         auto *tabs=new QTabWidget(this);tabs->setObjectName("taskEditorTabs");tabs->setMinimumHeight(360);layout->addWidget(tabs);
         const auto properties=rule.value("properties").toObject();
         const QList<QPair<QString,QStringList>> groups{
-            {"基本信息",{"id","name","order","workingDirectory"}},
+            {"基本信息",{"id","name","kind","order","dependsOn"}},
             {"命令",{"serviceCommand","prepareCommands"}},
-            {"环境",{"environment"}},
-            {"重启与停止",{"restartPolicy","shutdownGraceMs"}}};
+            {"环境",{"environmentRef","environment"}},
+            {"生命周期",{"lifetime","readiness","restartPolicy","shutdownGraceMs"}}};
         auto editors=std::make_shared<QList<SchemaEditor *>>();
         for(const auto &group:groups){
             QJsonObject fields;for(const auto &key:group.second)if(properties.contains(key))fields[key]=properties[key];
@@ -185,6 +191,26 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
             scroll->setWidget(editor);tabs->addTab(scroll,group.first);editors->append(editor);connect(editor,&SchemaEditor::changed,this,&SchemaEditor::changed);
         }
         read_=[editors]{QJsonObject result;for(auto *editor:*editors){const auto fields=editor->value().toObject();for(auto it=fields.begin();it!=fields.end();++it)result[it.key()]=it.value();}return result;};return;
+    }
+    if (type == "object" && rule.value("properties").toObject().isEmpty() && resolved(rule.value("additionalProperties").toObject()).value("type") == "object") {
+        auto values = std::make_shared<QJsonObject>(initial.toObject());
+        auto *list = new QListWidget(this); list->setMaximumHeight(180); layout->addWidget(list);
+        const auto refresh = [list, values] { list->clear(); list->addItems(values->keys()); }; refresh();
+        auto *buttons = new QHBoxLayout; layout->addLayout(buttons);
+        auto *add = new QPushButton("添加环境", this); auto *edit = new QPushButton("编辑环境", this); auto *remove = new QPushButton("删除环境", this);
+        buttons->addWidget(add); buttons->addWidget(edit); buttons->addWidget(remove);
+        const auto valueRule = rule.value("additionalProperties").toObject();
+        connect(add, &QPushButton::clicked, this, [this, values, refresh, valueRule] {
+            bool ok = false; const auto key = QInputDialog::getText(this, "环境名称", "用于任务引用的环境名称", QLineEdit::Normal, {}, &ok).trimmed();
+            if (!ok || key.isEmpty() || values->contains(key)) return;
+            if (const auto value = editDialog(schema_, valueRule, initialValue(schema_, valueRule), pathResolver_, this)) { values->insert(key, *value); refresh(); emit changed(); }
+        });
+        connect(edit, &QPushButton::clicked, this, [this, values, list, refresh, valueRule] {
+            if (!list->currentItem()) return; const auto key = list->currentItem()->text();
+            if (const auto value = editDialog(schema_, valueRule, values->value(key), pathResolver_, this)) { values->insert(key, *value); refresh(); emit changed(); }
+        });
+        connect(remove, &QPushButton::clicked, this, [this, values, list, refresh] { if (list->currentItem()) { values->remove(list->currentItem()->text()); refresh(); emit changed(); } });
+        read_ = [values] { return *values; }; return;
     }
     if (type == "object" && rule.value("properties").toObject().isEmpty()) {
         auto *table = new QTableWidget(this); table->setMinimumHeight(144); table->setMaximumHeight(240); table->setColumnCount(2); table->setHorizontalHeaderLabels({"变量名", "值"}); table->horizontalHeader()->setStretchLastSection(true);
@@ -199,8 +225,9 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
     }
     if (type == "object") {
         auto *form = new QFormLayout; form->setVerticalSpacing(16); form->setHorizontalSpacing(20); form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow); form->setRowWrapPolicy(QFormLayout::WrapLongRows); form->setLabelAlignment(Qt::AlignLeft | Qt::AlignTop); layout->addLayout(form);
+        auto edited = std::make_shared<QSet<QString>>();
         auto editors = std::make_shared<QMap<QString, SchemaEditor *>>(); const auto properties = rule.value("properties").toObject();
-        const QStringList preferredOrder{"id","name","description","order","mode","workingDirectory","activationScript","program","arguments","script","repositoryUrl","branch","gitExecutable","credentialTarget","timeoutMs","successExitCodes","serviceCommand","prepareCommands","environment","inheritSystem","envFiles","variables","type","address","port","url","restartPolicy","shutdownGraceMs"};
+        const QStringList preferredOrder{"id","name","description","kind","order","mode","workingDirectory","venv","program","npmCli","npmAction","script","toolArguments","arguments","activationScript","io","repositoryUrl","branch","gitExecutable","credentialTarget","timeoutMs","successExitCodes","serviceCommand","prepareCommands","environment","inheritSystem","envFiles","variables","type","address","port","url","restartPolicy","shutdownGraceMs"};
         auto keys = properties.keys();
         std::stable_sort(keys.begin(), keys.end(), [&preferredOrder](const QString &a, const QString &b) {
             const auto rank = [&preferredOrder](const QString &key) { const auto index = preferredOrder.indexOf(key); return index < 0 ? preferredOrder.size() : index; };
@@ -224,17 +251,34 @@ void SchemaEditor::build(QJsonObject rule, QJsonValue initial) {
             if(!hint.isEmpty()) {editor->setToolTip(hint);editor->layout()->addWidget(helpText(hint,editor));}
             if(key=="credentialTarget")if(auto *line=editor->findChild<QLineEdit *>())line->setReadOnly(true);
             editors->insert(key,editor); connect(editor,&SchemaEditor::changed,this,&SchemaEditor::changed);
+            connect(editor, &SchemaEditor::changed, this, [edited, key] { edited->insert(key); });
         }
         auto applyMode = [editors,form] {
             if (!editors->contains("mode") || !editors->contains("program")) return;
-            const bool exec = editors->value("mode")->value() == "exec";
-            form->setRowVisible(editors->value("program"), exec); form->setRowVisible(editors->value("arguments"), exec); form->setRowVisible(editors->value("script"), !exec);
+            const auto mode = editors->value("mode")->value().toString();
+            const auto show = [&](const QString &key, bool visible) { if (editors->contains(key)) form->setRowVisible(editors->value(key), visible); };
+            show("program", mode == "exec" || mode == "uv" || mode == "npm");
+            show("arguments", mode != "shell"); show("script", mode == "shell" || mode == "npm");
+            show("venv", mode == "python-venv"); show("npmCli", mode == "npm"); show("npmAction", mode == "npm");
+            show("toolArguments", mode == "npm" || mode == "uv"); show("activationScript", mode == "exec" || mode == "shell");
         };
         if (editors->contains("mode")) connect(editors->value("mode"),&SchemaEditor::changed,this,applyMode); applyMode();
-        read_ = [editors] {
-            QJsonObject result; for(auto it=editors->begin();it!=editors->end();++it) result[it.key()]=it.value()->value();
+        read_ = [editors, edited, initial, properties] {
+            const QSet<QString> optional{"kind","lifetime","readiness","dependsOn","environmentRef","io","toolArguments","venv","npmCli","npmAction","resetAfterSeconds","extends","portPolicy"};
+            QJsonObject result;
+            for(auto it=editors->begin();it!=editors->end();++it) {
+                if ((optional.contains(it.key()) || (it.key() == "environment" && properties.contains("program"))) && !initial.toObject().contains(it.key()) && !edited->contains(it.key())) continue;
+                result[it.key()]=it.value()->value();
+            }
             if (result.contains("mode") && result.contains("program")) {
-                if (result.value("mode") == "exec") result.remove("script"); else { result.remove("program"); result.remove("arguments"); }
+                const auto mode = result.value("mode").toString();
+                if (mode != "npm" && mode != "shell") result.remove("script");
+                if (mode == "shell") { result.remove("program"); result.remove("arguments"); }
+                if (mode == "python-venv") result.remove("program");
+                if (mode != "python-venv") result.remove("venv");
+                if (mode != "npm") { result.remove("npmCli"); result.remove("npmAction"); }
+                if (mode != "npm" && mode != "uv") result.remove("toolArguments");
+                if (mode != "exec" && mode != "shell") result.remove("activationScript");
             }
             return result;
         }; return;

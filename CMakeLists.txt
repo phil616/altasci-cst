@@ -46,7 +46,7 @@ cst_owned(cst_domain)
 add_library(cst_application STATIC
   src/application/ProjectConfigService.cpp
   src/application/PortReclaimService.cpp src/application/SourceSyncService.cpp
-  src/application/TaskSupervisor.cpp src/application/OperationQueue.cpp
+  src/application/RuntimeClient.cpp src/application/RuntimeHost.cpp src/application/LaunchPlanner.cpp src/application/TaskSupervisor.cpp src/application/OperationQueue.cpp
   src/application/ProjectRuntimeService.cpp src/application/LogService.cpp
   src/application/DiagnosticExportService.cpp src/infrastructure/common/SystemClock.cpp)
 target_link_libraries(cst_application PUBLIC cst_domain)
@@ -56,7 +56,7 @@ add_library(cst_platform_windows STATIC
   src/infrastructure/windows/WindowsPortManager.cpp src/infrastructure/windows/WindowsSession.cpp)
 target_link_libraries(cst_platform_windows PUBLIC cst_application PRIVATE Advapi32 Iphlpapi Ws2_32 Shell32 User32 Ole32)
 cst_owned(cst_platform_windows)
-add_library(cst_ui STATIC src/ui/MainWindow.cpp src/ui/widgets/SchemaEditor.cpp
+add_library(cst_ui STATIC src/ui/widgets/TerminalView.cpp src/ui/MainWindow.cpp src/ui/widgets/SchemaEditor.cpp
   src/ui/pages/user/UserPage.cpp src/ui/pages/admin/AdminPage.cpp)
 target_link_libraries(cst_ui PUBLIC cst_application Qt6::Widgets)
 qt_add_resources(cst_ui "ui_icons" PREFIX "/ui" BASE resources/ui FILES resources/ui/down.png resources/ui/up.png resources/ui/check.png)
@@ -67,6 +67,9 @@ target_include_directories(cst PRIVATE resources)
 target_link_options(cst PRIVATE /MANIFESTUAC:NO)
 qt_add_resources(cst "configuration" PREFIX "/config" BASE config FILES config/cst-project.schema.json config/cst-project.example.json)
 cst_owned(cst)
+qt_add_executable(cst-runtime src/runtime/main.cpp)
+target_link_libraries(cst-runtime PRIVATE cst_platform_windows)
+cst_owned(cst-runtime)
 add_executable(cst-git-askpass helpers/git-askpass/main.cpp)
 target_link_libraries(cst-git-askpass PRIVATE cst_platform_windows)
 cst_owned(cst-git-askpass)
@@ -92,7 +95,7 @@ foreach(scale 1.25 1.5 2)
   set_tests_properties(ui.${scale} PROPERTIES ENVIRONMENT "QT_SCALE_FACTOR=${scale};CST_UI_CAPTURE_DIR=${CMAKE_BINARY_DIR}/Testing/screenshots/${scale}" TIMEOUT 30)
 endforeach()
 
-install(TARGETS cst cst-git-askpass cst-signal-helper RUNTIME DESTINATION .)
+install(TARGETS cst cst-runtime cst-git-askpass cst-signal-helper RUNTIME DESTINATION .)
 add_executable(cst-integration-git tests/integration/GitSyncTests.cpp)
 target_link_libraries(cst-integration-git PRIVATE cst_platform_windows Qt6::Test)
 cst_owned(cst-integration-git)
@@ -107,7 +110,8 @@ cst_owned(cst-integration-windows)
 add_test(NAME integration.windows COMMAND cst-integration-windows -o "${CMAKE_BINARY_DIR}/Testing/results/integration.windows.txt,txt" -o -,txt)
 set_tests_properties(integration.windows PROPERTIES LABELS admin TIMEOUT 120)
 install(DIRECTORY LICENSES/ DESTINATION LICENSES)
-install(FILES config/cst-project.schema.json config/cst-project.example.json DESTINATION config)
+install(FILES config/cst-project.schema.json config/cst-project.example.json config/runtime-v2.example.json DESTINATION config)
+install(FILES docs/runtime-v2.md DESTINATION docs)
 get_target_property(qmake_executable Qt6::qmake IMPORTED_LOCATION)
 get_filename_component(qt_bin "${qmake_executable}" DIRECTORY)
 set(package_root "${CMAKE_BINARY_DIR}/installer")
@@ -116,5 +120,32 @@ add_custom_target(package-installer
   COMMAND "${CMAKE_COMMAND}" -DCST_SOURCE=${CMAKE_SOURCE_DIR} -DCST_BUILD=${CMAKE_BINARY_DIR}
     -DCST_QT_BIN=${qt_bin} -DCST_IFW_ROOT=${CST_IFW_ROOT} -DCST_PRODUCTION_SIGNING=${CST_PRODUCTION_SIGNING}
     -P "${CMAKE_SOURCE_DIR}/cmake/Package.cmake"
-  DEPENDS cst cst-git-askpass cst-signal-helper
+  DEPENDS cst cst-runtime cst-git-askpass cst-signal-helper
   USES_TERMINAL VERBATIM)
+
+# Runtime v2 behavior tests and an isolated IPC host fixture.
+add_executable(cst-test-runtime-host tests/fixtures/RuntimeHostFixture.cpp)
+target_link_libraries(cst-test-runtime-host PRIVATE cst_application)
+add_executable(cst-unit-launch tests/unit/LaunchTests.cpp)
+target_link_libraries(cst-unit-launch PRIVATE cst_application Qt6::Test)
+add_test(NAME unit.launch COMMAND cst-unit-launch)
+set_tests_properties(unit.launch PROPERTIES TIMEOUT 60)
+cst_owned(cst-unit-launch)
+add_executable(cst-unit-runtime tests/unit/RuntimeTests.cpp)
+target_link_libraries(cst-unit-runtime PRIVATE cst_application Qt6::Test)
+add_test(NAME unit.runtime COMMAND cst-unit-runtime)
+set_tests_properties(unit.runtime PROPERTIES TIMEOUT 60)
+cst_owned(cst-unit-runtime)
+add_executable(cst-unit-terminal tests/unit/TerminalTests.cpp)
+target_link_libraries(cst-unit-terminal PRIVATE cst_ui Qt6::Test)
+add_test(NAME unit.terminal COMMAND cst-unit-terminal)
+set_tests_properties(unit.terminal PROPERTIES TIMEOUT 60)
+cst_owned(cst-unit-terminal)
+add_dependencies(cst-unit-runtime cst-test-runtime-host)
+cst_owned(cst-test-runtime-host)
+
+add_executable(cst-integration-runtime tests/integration/RuntimeWindowsTests.cpp)
+target_link_libraries(cst-integration-runtime PRIVATE cst_platform_windows Qt6::Test)
+cst_owned(cst-integration-runtime)
+add_test(NAME integration.runtime COMMAND cst-integration-runtime -o "${CMAKE_BINARY_DIR}/Testing/results/integration.runtime.txt,txt" -o -,txt)
+set_tests_properties(integration.runtime PROPERTIES TIMEOUT 240)

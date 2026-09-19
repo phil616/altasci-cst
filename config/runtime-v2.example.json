@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 2,
+  "project": {
+    "id": "762f9c21-2e76-4dbe-8e91-83f11a1fde44",
+    "name": "Runtime v2 测试",
+    "description": "先修改源码目录，再测试 venv 和独立 Console。",
+    "source": {
+      "workingDirectory": "C:/Projects/runtime-demo"
+    },
+    "toolDirectories": [],
+    "environment": {
+      "inheritSystem": true,
+      "envFiles": [],
+      "variables": {
+        "PYTHONUTF8": "1"
+      }
+    },
+    "environments": {},
+    "requiredPorts": [],
+    "userActions": [],
+    "settings": {
+      "portPolicy": "fail",
+      "portReclaimTimeoutMs": 15000,
+      "maxAncestorEscalation": 8
+    },
+    "tasks": [
+      {
+        "id": "python-console",
+        "name": "Python 虚拟环境 Console",
+        "kind": "service",
+        "order": 10,
+        "lifetime": "root",
+        "environment": {
+          "inheritSystem": true,
+          "envFiles": [],
+          "variables": {}
+        },
+        "prepareCommands": [
+          {
+            "id": "create-venv",
+            "name": "创建虚拟环境",
+            "mode": "exec",
+            "program": "python.exe",
+            "arguments": [
+              "-m",
+              "venv",
+              ".venv"
+            ],
+            "workingDirectory": "{{PROJECT_DIR}}",
+            "timeoutMs": 120000,
+            "successExitCodes": [
+              0
+            ],
+            "io": {
+              "mode": "pipes",
+              "stdin": "closed",
+              "encoding": "utf-8"
+            }
+          }
+        ],
+        "serviceCommand": {
+          "id": "python-repl",
+          "name": "交互解释器",
+          "mode": "python-venv",
+          "venv": ".venv",
+          "arguments": [
+            "-i",
+            "-u"
+          ],
+          "workingDirectory": "{{PROJECT_DIR}}",
+          "timeoutMs": 0,
+          "successExitCodes": [
+            0
+          ],
+          "io": {
+            "mode": "terminal"
+          }
+        },
+        "readiness": {
+          "type": "none"
+        },
+        "restartPolicy": {
+          "mode": "never",
+          "maxRestarts": 5,
+          "windowSeconds": 600,
+          "backoffSeconds": 1,
+          "maxBackoffSeconds": 30
+        },
+        "shutdownGraceMs": 3000
+      }
+    ]
+  }
+}

@@ -3,6 +3,13 @@
 #include <QSet>
 
 namespace cst {
+void PortReclaimService::requireFree(const QList<PortRequirement> &requirements) const {
+    for (const auto &port : requirements) {
+        const auto owners = ports_.owners(port);
+        if (!owners.isEmpty()) throw std::runtime_error(("端口已占用：" + port.address + ':' + QString::number(port.port) + " PID=" + QString::number(owners.first().pid) + " " + owners.first().imagePath).toUtf8().constData());
+    }
+}
+
 PortReclaimService::PortReclaimService(IPortManager &ports, IClock &clock) : ports_(ports), clock_(clock) {}
 QList<PortRequirement> PortReclaimService::requirements(const QJsonArray &array) {
     QList<PortRequirement> result;

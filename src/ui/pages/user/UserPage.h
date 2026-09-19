@@ -21,6 +21,7 @@ public:
     void appendLog(const QString &line);
 signals:
     void mainAction();
+    void consoleRequested(QString task);
     void configureRequested();
     void error(QString message);
 protected:

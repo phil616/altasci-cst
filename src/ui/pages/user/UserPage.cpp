@@ -28,7 +28,7 @@ UserPage::UserPage(IUrlLauncher &urls, QWidget *parent) : QWidget(parent), urls_
     actions_=new QGridLayout;actions_->setSpacing(12);actions_->setColumnStretch(0,1);actions_->setColumnStretch(1,1);entriesLayout->addLayout(actions_);layout->addWidget(entries_);
     detailsToggle_=new QToolButton(this);detailsToggle_->setText("运行详情");detailsToggle_->setCheckable(true);detailsToggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);detailsToggle_->setArrowType(Qt::RightArrow);layout->addWidget(detailsToggle_);
     details_=new QWidget(this);auto *detailLayout=new QVBoxLayout(details_);detailLayout->setContentsMargins(0,0,0,0);
-    tasks_=new QTableWidget(details_);tasks_->setColumnCount(3);tasks_->setHorizontalHeaderLabels({"任务","状态","重启次数"});tasks_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);tasks_->setMinimumHeight(140);tasks_->setAlternatingRowColors(true);tasks_->setEditTriggers(QAbstractItemView::NoEditTriggers);detailLayout->addWidget(tasks_);
+    tasks_=new QTableWidget(details_);tasks_->setColumnCount(4);tasks_->setHorizontalHeaderLabels({"任务","状态","重启次数","Console"});tasks_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);tasks_->setMinimumHeight(140);tasks_->setAlternatingRowColors(true);tasks_->setEditTriggers(QAbstractItemView::NoEditTriggers);detailLayout->addWidget(tasks_);
     logs_=new QPlainTextEdit(details_);logs_->setPlaceholderText("运行日志将在启动后显示。需要筛选或导出时，请打开管理员 → 运行日志。");logs_->setMinimumHeight(160);logs_->setProperty("role","code");logs_->setReadOnly(true);logs_->setMaximumBlockCount(5000);logs_->setAccessibleName("最近运行日志");detailLayout->addWidget(logs_);
     details_->hide();layout->addWidget(details_,1);layout->addStretch();
     connect(detailsToggle_,&QToolButton::toggled,this,[this](bool expanded){details_->setVisible(expanded);detailsToggle_->setArrowType(expanded?Qt::DownArrow:Qt::RightArrow);});
@@ -59,8 +59,8 @@ void UserPage::setState(ProjectState state) {
         {ProjectState::Stopped,"已停止 · 点击启动，将依次检查配置、释放端口并启动任务。"},
         {ProjectState::Preflight,"检查配置中 · 正在确认命令与工作目录。可以点击停止取消启动。"},
         {ProjectState::ReclaimingPorts,"释放端口中 · 正在处理端口冲突。可以点击停止取消启动。"},
-        {ProjectState::Starting,"启动中 · 正在等待所有服务通过健康检查。"},
-        {ProjectState::Running,"运行中 · 服务已就绪，可以使用下方快捷入口。"},
+        {ProjectState::Starting,"启动中 · 正在执行准备步骤并启动任务。"},
+        {ProjectState::Running,"运行中 · 任务存活与就绪状态见运行详情。"},
         {ProjectState::Stopping,"停止中 · 正在退出服务并清理进程，请稍候。"},
         {ProjectState::Syncing,"同步中 · 正在更新项目代码，请等待操作完成。"},
         {ProjectState::Failed,"运行失败 · 展开运行详情查看日志，修正配置后可重新启动。"}};
@@ -77,6 +77,10 @@ void UserPage::setTask(const TaskStatus &task){
     int row=0;for(;row<tasks_->rowCount();++row)if(tasks_->item(row,0)->data(Qt::UserRole).toString()==task.id)break;
     if(row==tasks_->rowCount()){tasks_->insertRow(row);auto *name=new QTableWidgetItem(task.name);name->setData(Qt::UserRole,task.id);tasks_->setItem(row,0,name);}
     else tasks_->item(row,0)->setText(task.name);
+    if (!tasks_->cellWidget(row, 3)) {
+        auto *open = new QPushButton("打开 Console", tasks_); open->setAutoDefault(false); tasks_->setCellWidget(row, 3, open);
+        connect(open, &QPushButton::clicked, this, [this, id = task.id] { emit consoleRequested(id); });
+    }
     tasks_->setItem(row,1,new QTableWidgetItem(task.state));tasks_->setItem(row,2,new QTableWidgetItem(QString::number(task.restartCount)));
 }
 void UserPage::appendLog(const QString &line){logs_->appendHtml(formatLogLineHtml(line));}

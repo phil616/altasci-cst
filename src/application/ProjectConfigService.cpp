@@ -64,7 +64,8 @@ ValidationIssues ProjectConfigService::validate(const QJsonObject &document) con
 ValidationIssues ProjectConfigService::validateForRun(const QJsonObject &document) const { return validator_.validateForRun(document); }
 ValidationIssues ProjectConfigService::validateForSync(const QJsonObject &document) const { return validator_.validateForSync(document); }
 QJsonObject ProjectConfigService::load(const QString &path) const {
-    const auto document = normalizeProjectPaths(readJson(path));
+    auto document = normalizeProjectPaths(readJson(path));
+    if (document.value("schemaVersion").toInt() == 1) document["schemaVersion"] = 2;
     const auto issues = validate(document);
     if (!issues.isEmpty()) throw ConfigurationError(issues);
     return document;
@@ -73,15 +74,17 @@ void ProjectConfigService::save(const QString &path, const QJsonObject &document
     const auto normalized = normalizeProjectPaths(document);
     const auto issues = validate(normalized);
     if (!issues.isEmpty()) throw ConfigurationError(issues);
+    if (QFileInfo::exists(path) && !QFileInfo::exists(path + ".v1.bak") && readJson(path).value("schemaVersion").toInt() == 1 && normalized.value("schemaVersion").toInt() == 2)
+        if (!QFile::copy(path, path + ".v1.bak")) fail("不能创建 v1 配置备份：" + path);
     saveJson(path, normalized);
 }
 QJsonObject ProjectConfigService::create(const QString &name) const {
     const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    return {{"schemaVersion", 1}, {"project", QJsonObject{
+    return {{"schemaVersion", 2}, {"project", QJsonObject{
         {"id", id}, {"name", name}, {"description", ""},
         {"source", QJsonObject{}},
         {"toolDirectories", QJsonArray{}}, {"requiredPorts", QJsonArray{}}, {"tasks", QJsonArray{}},
-        {"userActions", QJsonArray{}}, {"settings", QJsonObject{{"portReclaimTimeoutMs", 15000}, {"maxAncestorEscalation", 8}}}
+        {"userActions", QJsonArray{}}, {"settings", QJsonObject{{"portPolicy", "fail"}, {"portReclaimTimeoutMs", 15000}, {"maxAncestorEscalation", 8}}}
     }}};
 }
 

@@ -4,6 +4,7 @@
 namespace cst {
 class PortReclaimService {
 public:
+    void requireFree(const QList<PortRequirement> &) const;
     PortReclaimService(IPortManager &ports, IClock &clock);
     void reclaim(const QList<PortRequirement> &required, int timeoutMs, int maxAncestorEscalation,
                  const QList<std::shared_ptr<IManagedProcess>> &oldJobs, const Cancellation &cancel);

@@ -1,5 +1,6 @@
 #include "application/DiagnosticExportService.h"
 #include "application/ProjectRuntimeService.h"
+#include "application/RuntimeClient.h"
 #include "infrastructure/common/QtUrlLauncher.h"
 #include "infrastructure/common/SystemClock.h"
 #include "infrastructure/windows/WindowsPlatform.h"
@@ -17,7 +18,6 @@ int main(int argc,char **argv){
     cst::applyTheme(application);
     application.setApplicationName("CST");application.setApplicationVersion("1.0.0");application.setOrganizationName("CST");
     try{
-        cst::WindowsPrivilegeService privilege;privilege.requireElevationAndDebugPrivilege();
         cst::WindowsSession::requireSupportedWindows();
         cst::WindowsSession session;if(!session.primary())return 0;
         const auto paths=cst::WindowsSession::paths();
@@ -27,7 +27,7 @@ int main(int argc,char **argv){
         cst::WindowsCredentialStore credentials;cst::WindowsPortManager ports;cst::WindowsFileTransaction files;cst::SystemClock clock;
         const auto install=QCoreApplication::applicationDirPath();
         cst::WindowsProcessRunner runner(install+"/cst-signal-helper.exe");
-        cst::PortReclaimService reclaim(ports,clock);cst::TaskSupervisor supervisor(runner,clock,paths);
+        cst::PortReclaimService reclaim(ports,clock);cst::RuntimeClient supervisor(install+"/cst-runtime.exe");
         QMutex operationMutex;cst::SourceSyncService sync(runner,files,clock,paths.storageDirectory,install+"/cst-git-askpass.exe",operationMutex);
         cst::LogService logs(paths.storageDirectory);cst::DiagnosticExportService diagnostics(runner,ports,clock,logs,paths.storageDirectory);
         cst::ProjectRuntimeService runtime(configuration,catalog,supervisor,reclaim,sync);
@@ -43,8 +43,7 @@ int main(int argc,char **argv){
             catch(const std::exception &e){QMessageBox::critical(&window,"无法读取凭据状态",QString::fromUtf8(e.what()));}
         });
         QObject::connect(&runtime,&cst::ProjectRuntimeService::processOutput,&logs,[&](const QString &task,const cst::ProcessOutput &output){
-            const auto id=runtime.currentProject().value("project").toObject().value("id").toString();
-            logs.write(id,task,runtime.operationId(),"process."+output.channel,output.text,"info",output.channel,output.decodeError,output.timestamp);
+            if(output.channel=="record") emit logs.lineWritten(task,output.text);
         });
         QObject::connect(&runtime,&cst::ProjectRuntimeService::stateChanged,&logs,[&](cst::ProjectState state){
             const auto id=runtime.currentProject().value("project").toObject().value("id").toString();

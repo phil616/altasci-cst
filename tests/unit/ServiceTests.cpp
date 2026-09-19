@@ -128,16 +128,30 @@ private slots:
         QCOMPARE(runner.events.mid(runner.events.size() - 2), QStringList({"stop:second-serve", "stop:first-serve"}));
         QVERIFY(supervisor.empty());
     }
-    void rapidStartupFailureStopsWithoutRestart() {
+    void rapidExitUsesConfiguredRestartBudget() {
         TestRunner runner; TestClock clock; Cancellation cancel;
         TaskSupervisor supervisor(runner, clock, {});
         supervisor.start(project(0), "operation", cancel);
         QCOMPARE(runner.events.size(), 4);
         runner.services[0]->alive = false;
-        QVERIFY_THROWS_EXCEPTION(std::runtime_error, supervisor.tick(cancel));
+        supervisor.tick(cancel);
+        QCOMPARE(supervisor.statuses()[0].state, "Restarting");
         QCOMPARE(runner.events.size(), 4);
         QCOMPARE(runner.events.count("start:first-serve"), 1);
         supervisor.stop();
+    }
+    void oneShotCompletesAndTreeLifetimeKeepsDescendants() {
+        TestRunner runner; TestClock clock; Cancellation cancel; TaskSupervisor supervisor(runner, clock, {});
+        auto once = task("once", 0, 0); once["kind"] = "task"; once["prepareCommands"] = QJsonArray{};
+        auto cmd = once["serviceCommand"].toObject(); cmd["program"] = "once-prepare"; cmd["timeoutMs"] = 1000; once["serviceCommand"] = cmd;
+        supervisor.start({{"tasks", QJsonArray{once}}}, "run", cancel);
+        QCOMPARE(supervisor.statuses().first().state, "Completed"); QVERIFY(supervisor.empty()); supervisor.stop();
+    }
+    void neverRestartRejectsUnexpectedServiceExit() {
+        TestRunner runner; TestClock clock; Cancellation cancel; TaskSupervisor supervisor(runner, clock, {});
+        auto config = task("service", 0, 0); config["restartPolicy"] = QJsonObject{{"mode", "never"}};
+        supervisor.start({{"tasks", QJsonArray{config}}}, "run", cancel); runner.services.first()->alive = false;
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, supervisor.tick(cancel)); supervisor.stop();
     }
     void failureShortCircuitAndCleanup() {
         QTcpServer endpoint; QVERIFY(endpoint.listen(QHostAddress::LocalHost));

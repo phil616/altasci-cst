@@ -22,7 +22,7 @@ add_library(cst_application STATIC
   ../src/application/ProjectConfigService.cpp
   ../src/application/PortReclaimService.cpp
   ../src/application/SourceSyncService.cpp
-  ../src/application/TaskSupervisor.cpp
+  ../src/application/RuntimeClient.cpp ../src/application/RuntimeHost.cpp ../src/application/LaunchPlanner.cpp ../src/application/TaskSupervisor.cpp
   ../src/application/OperationQueue.cpp
   ../src/application/ProjectRuntimeService.cpp
   ../src/application/LogService.cpp
@@ -42,7 +42,7 @@ add_executable(cst-unit-services unit/ServiceTests.cpp)
 target_link_libraries(cst-unit-services PRIVATE cst_application Qt6::Test)
 add_test(NAME services COMMAND cst-unit-services)
 add_library(cst_ui STATIC
-  ../src/ui/MainWindow.cpp
+  ../src/ui/widgets/TerminalView.cpp ../src/ui/MainWindow.cpp
   ../src/ui/widgets/SchemaEditor.cpp
   ../src/ui/pages/user/UserPage.cpp
   ../src/ui/pages/admin/AdminPage.cpp)
@@ -64,3 +64,21 @@ target_link_libraries(cst-unit-log PRIVATE cst_application Qt6::Test)
 add_test(NAME log COMMAND cst-unit-log)
 add_executable(cst-test-port-owner fixtures/PortOwner.cpp)
 target_link_libraries(cst-test-port-owner PRIVATE Qt6::Core Qt6::Network)
+
+# Runtime v2 behavior tests and an isolated IPC host fixture.
+add_executable(cst-test-runtime-host fixtures/RuntimeHostFixture.cpp)
+target_link_libraries(cst-test-runtime-host PRIVATE cst_application)
+add_executable(cst-unit-launch unit/LaunchTests.cpp)
+target_link_libraries(cst-unit-launch PRIVATE cst_application Qt6::Test)
+add_test(NAME unit.launch COMMAND cst-unit-launch)
+set_tests_properties(unit.launch PROPERTIES TIMEOUT 60)
+add_executable(cst-unit-runtime unit/RuntimeTests.cpp)
+target_link_libraries(cst-unit-runtime PRIVATE cst_application Qt6::Test)
+add_test(NAME unit.runtime COMMAND cst-unit-runtime)
+set_tests_properties(unit.runtime PROPERTIES TIMEOUT 60)
+add_executable(cst-unit-terminal unit/TerminalTests.cpp)
+target_link_libraries(cst-unit-terminal PRIVATE cst_ui Qt6::Test)
+add_test(NAME unit.terminal COMMAND cst-unit-terminal)
+set_tests_properties(unit.terminal PROPERTIES TIMEOUT 60)
+add_dependencies(cst-unit-runtime cst-test-runtime-host)
+set_tests_properties(unit.terminal PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

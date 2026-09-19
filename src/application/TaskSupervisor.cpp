@@ -1,107 +1,35 @@
 #include "TaskSupervisor.h"
+#include "LaunchPlanner.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
 #include <QJsonArray>
 #include <algorithm>
+#include <QSet>
+#include <QTcpSocket>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QEventLoop>
+#include <QTimer>
 
 namespace cst {
 namespace {
-QStringList strings(const QJsonArray &array) { QStringList values; for (const auto &value : array) values.append(value.toString()); return values; }
-Environment environmentValues(const QJsonObject &object) {
-    Environment result; for (auto it = object.begin(); it != object.end(); ++it) result.insert(it.key(), it.value().toString()); return result;
-}
-QStringList toolSearchDirectories(const QStringList &configured, const Environment &environment) {
-    QStringList result;
-    const auto append = [&](const QString &path, bool requireExisting) {
-        const auto normalized = normalizeWindowsPathInput(path);
-        if (normalized.isEmpty() || !isWindowsAbsolutePath(normalized)) return;
-        if (requireExisting && !QFileInfo(normalized).isDir()) return;
-        for (const auto &existing : result) if (QString::compare(existing, normalized, Qt::CaseInsensitive) == 0) return;
-        result.append(normalized);
-    };
-    for (const auto &path : configured) append(path, false);
-    append(environment.value("APPDATA") + "/npm", true);
-    append(environment.value("LOCALAPPDATA") + "/pnpm", true);
-    append(environment.value("USERPROFILE") + "/AppData/Roaming/npm", true);
-    append(environment.value("USERPROFILE") + "/AppData/Local/pnpm", true);
-    append(environment.value("PROGRAMFILES") + "/nodejs", true);
-    append(environment.value("PROGRAMFILES(X86)") + "/nodejs", true);
-    return result;
-}
 [[noreturn]] void taskError(const QString &message) { throw std::runtime_error(message.toUtf8().constData()); }
 }
 TaskSupervisor::TaskSupervisor(IProcessRunner &runner, IClock &clock, ProjectPaths paths)
     : runner_(runner), clock_(clock), paths_(std::move(paths)) {}
-QJsonObject TaskSupervisor::expand(const QJsonObject &object) const {
-    const auto id = project_.value("id").toString();
-    const QMap<QString, QString> values{{"PROJECT_DIR", project_.value("source").toObject().value("workingDirectory").toString()},
-                                       {"DATA_DIR", paths_.dataDirectory(id)}, {"LOG_DIR", paths_.logDirectory(id)}};
-    const auto replace = [&](auto &&self, const QJsonValue &value) -> QJsonValue {
-        if (value.isString()) return expandPlaceholders(value.toString(), values);
-        if (value.isArray()) { QJsonArray result; for (const auto &item : value.toArray()) result.append(self(self, item)); return result; }
-        if (value.isObject()) { auto result = value.toObject(); for (auto it = result.begin(); it != result.end(); ++it) it.value() = self(self, it.value()); return result; }
-        return value;
-    };
-    return replace(replace, object).toObject();
-}
-ProcessSpec TaskSupervisor::command(const QJsonObject &task, const QJsonObject &rawCommand) const {
-    const auto spec = expand(rawCommand);
-    const auto expandedTask = expand(task);
-    const auto env = expandedTask.value("environment").toObject();
-    QList<Environment> files;
-    for (const auto &path : env.value("envFiles").toArray()) {
-        QFile file(path.toString());
-        if (!file.open(QIODevice::ReadOnly)) taskError("无法读取环境文件：" + path.toString() + "：" + file.errorString());
-        files.append(parseEnv(file.readAll()));
-    }
-    const auto id = project_.value("id").toString();
-    const auto projectDirectory = project_.value("source").toObject().value("workingDirectory").toString();
-    const auto inherited = runner_.inheritedEnvironment();
-    const auto configuredTools = strings(expand(QJsonObject{{"tools", project_.value("toolDirectories")}}).value("tools").toArray());
-    const auto tools = toolSearchDirectories(configuredTools, inherited);
-    ProcessSpec result;
-    result.projectId = id; result.taskId = task.value("id").toString(); result.operationId = operationId_;
-    result.workingDirectory = spec.value("workingDirectory").toString();
-    if (result.workingDirectory.trimmed().isEmpty()) result.workingDirectory = expandedTask.value("workingDirectory").toString();
-    result.environment = mergeEnvironment(env.value("inheritSystem").toBool(), inherited, files,
-        environmentValues(env.value("variables").toObject()), {{"CST_PROJECT_ID", id}, {"CST_PROJECT_DIR", projectDirectory},
-        {"CST_DATA_DIR", paths_.dataDirectory(id)}, {"CST_LOG_DIR", paths_.logDirectory(id)}});
-    QStringList pathParts = tools;
-    const auto configuredPath = result.environment.value("PATH");
-    if (!configuredPath.isEmpty()) pathParts.append(configuredPath);
-    const auto inheritedPath = inherited.value("PATH");
-    if (!inheritedPath.isEmpty()) pathParts.append(inheritedPath);
-    pathParts.removeDuplicates();
-    if (!pathParts.isEmpty()) result.environment["PATH"] = pathParts.join(';');
-    auto commandProcessor = inherited.value("COMSPEC");
-    if (commandProcessor.isEmpty()) commandProcessor = inherited.value("SYSTEMROOT") + "\\System32\\cmd.exe";
-    commandProcessor = runner_.resolveExecutable(commandProcessor, {});
-    const auto activation = spec.value("activationScript").toString().trimmed();
-    if (spec.value("mode") == "shell") {
-        result.program = commandProcessor;
-        auto script = spec.value("script").toString();
-        if (!activation.isEmpty()) script = "call " + quoteWindowsArgument(activation) + " && " + script;
-        result.shellCommandLine = "/D /S /C \"" + script + '"';
-    } else {
-        const auto program = runner_.resolveExecutable(spec.value("program").toString(), tools);
-        const auto arguments = strings(spec.value("arguments").toArray());
-        if (activation.isEmpty()) {
-            result.program = program;
-            result.arguments = arguments;
-        } else {
-            result.program = commandProcessor;
-            result.shellCommandLine = QStringLiteral("/D /S /C \"call ") + quoteWindowsArgument(activation) + QStringLiteral(" && ") + windowsCommandLine(program, arguments) + '"';
-        }
-    }
-    return result;
+QJsonObject TaskSupervisor::expand(const QJsonObject &object) const { return LaunchPlanner(runner_, paths_).expand(object, project_); }
+ProcessSpec TaskSupervisor::command(const QJsonObject &task, const QJsonObject &spec) const {
+    return LaunchPlanner(runner_, paths_).resolve(project_, task, spec, operationId_);
 }
 void TaskSupervisor::notify(Task &task, const QString &state) {
     task.state = state;
     if (taskChanged) taskChanged({task.configuration.value("id").toString(), task.configuration.value("name").toString(), state, task.budget.attempts()});
 }
 void TaskSupervisor::log(const QString &taskId, const QString &message) {
-    if (output) output(taskId, {"cst", message, false, QDateTime::currentDateTimeUtc()});
+    ProcessOutput item{"cst", message, false, QDateTime::currentDateTimeUtc()};
+    item.projectId = project_.value("id").toString(); item.runId = operationId_;
+    if (output) output(taskId, std::move(item));
 }
 void TaskSupervisor::preflight(const QJsonObject &project, const Cancellation &cancel) {
     if (!empty()) taskError("有残留托管进程，不能启动");
@@ -114,27 +42,15 @@ void TaskSupervisor::preflight(const QJsonObject &project, const Cancellation &c
         for (const auto &reserved : {paths_.installDirectory, paths_.storageDirectory, paths_.windowsDirectory})
             if (isWithinWindowsPath(canonical, reserved)) taskError("源码目录的实际路径位于受保护目录内");
     }
-    for (const auto &value : project.value("tasks").toArray()) {
-        cancel.check(); const auto task = value.toObject(); const auto expandedTask = expand(task);
-        const auto checkDirectory = [&](const QJsonObject &raw, const QString &label) {
-            const auto spec = expand(raw);
-            auto commandDirectory = spec.value("workingDirectory").toString();
-            if (commandDirectory.trimmed().isEmpty()) commandDirectory = expandedTask.value("workingDirectory").toString();
-            if (!QFileInfo(commandDirectory).isDir()) taskError("命令工作目录不存在：" + task.value("name").toString() + " / " + label + "：" + commandDirectory);
-            const auto activation = spec.value("activationScript").toString().trimmed();
-            if (!activation.isEmpty() && !QFileInfo(activation).isFile()) taskError("激活脚本不存在：" + task.value("name").toString() + " / " + label + "：" + activation);
-        };
-        for (const auto &spec : task.value("prepareCommands").toArray()) { cancel.check(); checkDirectory(spec.toObject(), spec.toObject().value("name").toString()); command(task, spec.toObject()); }
-        const auto service = task.value("serviceCommand").toObject();
-        checkDirectory(service, service.value("name").toString());
-        command(task, service);
-    }
+    // Files produced by earlier steps are checked by the backend at spawn time.
+    cancel.check();
 }
 void TaskSupervisor::prepare(Task &task, const QJsonObject &spec, const Cancellation &cancel) {
     notify(task, "Preparing");
     const auto processSpec = command(task.configuration, spec);
     log(processSpec.taskId, "执行准备命令：" + spec.value("name").toString() + " | " + processSpec.program + ' ' + processSpec.arguments.join(' ') + " | 工作目录：" + processSpec.workingDirectory);
-    preparing_ = runner_.start(processSpec, [this, id = processSpec.taskId](ProcessOutput line) { if (output) output(id, std::move(line)); });
+    preparing_ = runner_.start(processSpec, consumer(processSpec));
+    registerSession(processSpec.taskId, preparing_);
     const auto deadline = clock_.monotonicMs() + spec.value("timeoutMs").toInt();
     while (preparing_->rootRunning()) {
         cancel.check(); tick(cancel);
@@ -142,7 +58,7 @@ void TaskSupervisor::prepare(Task &task, const QJsonObject &spec, const Cancella
         clock_.sleep(25, cancel);
     }
     const auto result = preparing_->result();
-    if (!preparing_->empty()) preparing_->forceStop();
+    preparing_->forceStop();
     preparing_.reset();
     if (!result || result->crashed || !spec.value("successExitCodes").toArray().contains(double(result->exitCode))) taskError("准备命令失败：" + spec.value("name").toString());
 }
@@ -154,9 +70,11 @@ void TaskSupervisor::launch(Task &task, const Cancellation &cancel) {
     const auto commandText = spec.shellCommandLine.isEmpty() ? (spec.program + ' ' + spec.arguments.join(' ')) : (spec.program + ' ' + spec.shellCommandLine);
     log(taskId, "启动服务命令：" + commandText + " | 工作目录：" + spec.workingDirectory);
     task.startedAt = clock_.monotonicMs();
-    task.process = runner_.start(spec, [this, id = spec.taskId](ProcessOutput line) { if (output) output(id, std::move(line)); });
+    task.process = runner_.start(spec, consumer(spec));
+    registerSession(spec.taskId, task.process);
     log(taskId, "服务进程已创建，PID=" + QString::number(task.process->rootPid()));
     notify(task, "Running");
+    waitReady(task, cancel);
 }
 void TaskSupervisor::start(const QJsonObject &project, const QString &operationId, const Cancellation &cancel) {
     if (!empty()) taskError("有残留托管进程，不能启动");
@@ -166,21 +84,34 @@ void TaskSupervisor::start(const QJsonObject &project, const QString &operationI
         const auto task = value.toObject(); const auto policy = task.value("restartPolicy").toObject();
         Task initialized;
         initialized.configuration = task;
-        initialized.budget = RestartBudget({policy.value("maxRestarts").toInt(), qint64(policy.value("windowSeconds").toInt()) * 1000,
-            policy.value("backoffSeconds").toInt(), policy.value("maxBackoffSeconds").toInt()});
+        initialized.budget = RestartBudget({policy.value("maxRestarts").toInt(5), qint64(policy.value("windowSeconds").toInt(600)) * 1000,
+            policy.value("backoffSeconds").toInt(1), policy.value("maxBackoffSeconds").toInt(30)});
         tasks_.push_back(std::move(initialized));
     }
     std::sort(tasks_.begin(), tasks_.end(), [](const Task &a, const Task &b) { return a.configuration.value("order").toInt() < b.configuration.value("order").toInt(); });
+    std::vector<Task> sorted;
+    QSet<QString> added;
+    while (sorted.size() < tasks_.size()) {
+        bool progress = false;
+        for (const auto &task : tasks_) {
+            const auto id = task.configuration.value("id").toString();
+            if (added.contains(id)) continue;
+            bool eligible = true;
+            for (const auto &dep : task.configuration.value("dependsOn").toArray())
+                if (!added.contains(dep.toObject().value("task").toString())) eligible = false;
+            if (eligible) { sorted.push_back(task); added.insert(id); progress = true; }
+        }
+        if (!progress) taskError("任务依赖循环或目标不存在");
+    }
+    tasks_ = std::move(sorted);
     for (auto &task : tasks_) {
         for (const auto &prepareSpec : task.configuration.value("prepareCommands").toArray()) { cancel.check(); prepare(task, prepareSpec.toObject(), cancel); }
-        launch(task, cancel);
+        if (task.configuration.value("kind").toString() == "task") {
+            prepare(task, task.configuration.value("serviceCommand").toObject(), cancel);
+            notify(task, "Completed");
+        } else launch(task, cancel);
     }
-    for (;;) {
-        tick(cancel);
-        const bool allRunning = std::all_of(tasks_.begin(), tasks_.end(), [](const Task &task) { return task.state == "Running"; });
-        if (allRunning) break;
-        clock_.sleep(25, cancel);
-    }
+    tick(cancel);
 }
 void TaskSupervisor::tick(const Cancellation &cancel) {
     if (stopping_) return;
@@ -193,20 +124,26 @@ void TaskSupervisor::tick(const Cancellation &cancel) {
             catch (...) { task.restarting = false; notify(task, "Failed"); throw; }
             continue;
         }
-        if (task.restarting || (task.state != "Running" && task.state != "Restarting") || !task.process) continue;
-        if (task.process->rootRunning() && !task.process->empty()) continue;
+        if (task.restarting || (task.state != "Running" && task.state != "Ready" && task.state != "Restarting") || !task.process) continue;
+        const bool tree = task.configuration.value("lifetime").toString() == "tree";
+        const auto rootResult = task.process->result();
+        const auto successCodes = task.configuration.value("serviceCommand").toObject().value("successExitCodes").toArray();
+        const bool success = rootResult && !rootResult->crashed && successCodes.contains(double(rootResult->exitCode));
+        if ((task.process->rootRunning() || (tree && success)) && !task.process->treeEmpty()) continue;
         const auto result = task.process->result();
         const auto uptime = task.startedAt ? clock_.monotonicMs() - *task.startedAt : 0;
         QString exitText = "退出状态未知";
         if (result) exitText = result->crashed ? "异常退出代码 " + QString::number(result->exitCode) : "退出代码 " + QString::number(result->exitCode);
         log(task.configuration.value("id").toString(), "服务进程" + exitText + "，运行 " + QString::number(uptime) + " ms");
         task.process->forceStop();
-        if (uptime < 1500) {
-            const auto message = "服务命令启动后 " + QString::number(uptime) + " ms 内退出，已按启动失败处理。请查看运行日志中的命令输出：" + task.configuration.value("name").toString();
-            log(task.configuration.value("id").toString(), message);
-            notify(task, "Failed");
-            throw std::runtime_error(message.toUtf8().constData());
+        const auto restart = task.configuration.value("restartPolicy").toObject();
+        const auto mode = restart.value("mode").toString("always");
+        if (mode == "never" || (mode == "on_failure" && success)) {
+            notify(task, success ? "Exited" : "Failed");
+            taskError("长期服务已退出：" + task.configuration.value("name").toString() + "（" + exitText + "）");
         }
+        const auto resetSeconds = restart.value("resetAfterSeconds").toInt();
+        if (resetSeconds > 0 && uptime >= qint64(resetSeconds) * 1000) task.budget.reset();
         const auto delay = task.budget.schedule(clock_.monotonicMs());
         if (!delay) {
             const auto message = "服务重启次数超过滑动窗口限制，任务失败：" + task.configuration.value("name").toString();
@@ -218,6 +155,55 @@ void TaskSupervisor::tick(const Cancellation &cancel) {
         notify(task, "Restarting");
         log(task.configuration.value("id").toString(), "将在 " + QString::number(*delay / 1000) + " 秒后重启，累计重启次数 " + QString::number(task.budget.attempts()) + "/" + QString::number(task.configuration.value("restartPolicy").toObject().value("maxRestarts").toInt()));
     }
+}
+
+std::function<void(ProcessOutput)> TaskSupervisor::consumer(const ProcessSpec &spec) {
+    return [this, spec](ProcessOutput item) {
+        item.projectId = spec.projectId; item.runId = spec.operationId; item.attemptId = spec.attemptId;
+        if (output) output(spec.taskId, std::move(item));
+    };
+}
+void TaskSupervisor::registerSession(const QString &id, const std::shared_ptr<IManagedProcess> &session) {
+    std::lock_guard lock(sessionsMutex_); sessions_[id] = session;
+}
+void TaskSupervisor::writeInput(const QString &id, const QByteArray &bytes) {
+    std::shared_ptr<IManagedProcess> session;
+    { std::lock_guard lock(sessionsMutex_); session = sessions_.value(id); }
+    if (!session || session->treeEmpty()) taskError("任务已退出，不能输入");
+    session->writeInput(bytes);
+}
+void TaskSupervisor::resizeTerminal(const QString &id, int columns, int rows) {
+    std::shared_ptr<IManagedProcess> session;
+    { std::lock_guard lock(sessionsMutex_); session = sessions_.value(id); }
+    if (session && !session->treeEmpty()) session->resizeTerminal(columns, rows);
+}
+void TaskSupervisor::waitReady(Task &task, const Cancellation &cancel) {
+    const auto probe = task.configuration.value("readiness").toObject();
+    const auto type = probe.value("type").toString("none");
+    if (type == "none") return;
+    const auto deadline = clock_.monotonicMs() + probe.value("timeoutMs").toInt(30000);
+    while (clock_.monotonicMs() < deadline) {
+        cancel.check();
+        if (task.process->treeEmpty()) taskError("就绪前进程已退出：" + task.configuration.value("name").toString());
+        bool ready = false;
+        if (type == "tcp") {
+            QTcpSocket socket; socket.connectToHost(probe.value("host").toString(), quint16(probe.value("port").toInt()));
+            ready = socket.waitForConnected(100);
+        } else if (type == "http") {
+            QNetworkAccessManager manager;
+            auto *reply = manager.get(QNetworkRequest(QUrl(probe.value("url").toString())));
+            QEventLoop loop; QTimer timer; timer.setSingleShot(true);
+            QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+            QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+            timer.start(200); loop.exec();
+            const auto code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            ready = reply->isFinished() && reply->error() == QNetworkReply::NoError && code >= 200 && code < 400;
+            if (!reply->isFinished()) reply->abort();
+        }
+        if (ready) { notify(task, "Ready"); return; }
+        clock_.sleep(100, cancel);
+    }
+    taskError("服务就绪检查超时：" + task.configuration.value("name").toString());
 }
 
 void TaskSupervisor::stop() {

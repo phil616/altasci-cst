@@ -32,14 +32,23 @@ void LogService::append(const QString &path, const QByteArray &line, qint64 limi
     if (!file.open(QIODevice::WriteOnly | QIODevice::Append) || file.write(line) != line.size() || !file.flush()) fail("日志写入失败：" + path + ": " + file.errorString());
 }
 void LogService::write(QString projectId, QString taskId, QString operationId, QString event, QString message,
-                       QString level, QString channel, bool decodeError, QDateTime timestamp) {
+                       QString level, QString channel, bool decodeError, QDateTime timestamp, QString attemptId) {
+    const auto size = message.size() * 2 + 1024;
+    if (queuedBytes_.fetch_add(size) + size > 8 * 1024 * 1024) {
+        queuedBytes_.fetch_sub(size);
+        if (!overflow_.exchange(true)) emit failed("日志写入落后，已丢弃输出；请检查磁盘性能和空间");
+        return;
+    }
     QMetaObject::invokeMethod(writer_, [this, projectId = std::move(projectId), taskId = std::move(taskId), operationId = std::move(operationId),
-        event = std::move(event), message = std::move(message), level = std::move(level), channel = std::move(channel), decodeError, timestamp] {
+        event = std::move(event), message = std::move(message), level = std::move(level), channel = std::move(channel), decodeError, timestamp, attemptId = std::move(attemptId), size] {
+        queuedBytes_.fetch_sub(size); overflow_.store(false);
         try {
             static const QRegularExpression safe("^[a-zA-Z0-9-]+$");
             if (!safe.match(projectId).hasMatch() || (!taskId.isEmpty() && !safe.match(taskId).hasMatch())) throw std::invalid_argument("日志项目或任务标识无效");
             QJsonObject entry{{"ts", timestamp.toUTC().toString(Qt::ISODateWithMs)}, {"level", level}, {"projectId", projectId},
                 {"taskId", taskId}, {"operationId", operationId}, {"event", event}, {"message", redactSecrets(message, secrets_)}};
+            entry["runId"] = operationId;
+            if (!attemptId.isEmpty()) entry["attemptId"] = attemptId;
             if (!channel.isEmpty()) entry["channel"] = channel;
             if (decodeError) entry["decodeError"] = true;
             const auto bytes = QJsonDocument(entry).toJson(QJsonDocument::Compact) + '\n';

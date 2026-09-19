@@ -25,9 +25,13 @@ struct ProcessSpec {
     Environment environment;
     // shellCommandLine, when non-empty, is passed verbatim after the quoted cmd.exe path.
     QString shellCommandLine;
-    QString projectId;
+    QString projectId = {};
     QString taskId;
     QString operationId;
+    QString attemptId = {};
+    bool terminal = false;
+    bool inputEnabled = false;
+    QString encoding = "utf-8";
 };
 struct ProcessResult {
     qint64 exitCode = 0;
@@ -38,6 +42,11 @@ struct ProcessOutput {
     QString text;
     bool decodeError = false;
     QDateTime timestamp;
+    QString projectId = {};
+    QString runId = {};
+    QString attemptId = {};
+    QByteArray bytes = {};
+    quint64 sequence = 0;
 };
 class IManagedProcess {
 public:
@@ -47,6 +56,9 @@ public:
     virtual bool empty() const = 0;
     virtual QList<quint32> processIds() const = 0;
     virtual std::optional<ProcessResult> result() const = 0;
+    virtual bool treeEmpty() const { return processIds().isEmpty(); }
+    virtual void writeInput(const QByteArray &) { throw std::runtime_error("此任务不支持输入"); }
+    virtual void resizeTerminal(int, int) {}
     virtual void stop(int graceMs) = 0;
     virtual void forceStop() = 0;
 };
@@ -57,6 +69,9 @@ public:
                                                  std::function<void(ProcessOutput)> output) = 0;
     virtual QString resolveExecutable(const QString &program, const QStringList &toolDirectories) const = 0;
     virtual Environment inheritedEnvironment() const = 0;
+    virtual QString resolveInEnvironment(const QString &program, const Environment &environment, const QString &) const {
+        return resolveExecutable(program, environment.value("PATH").split(';', Qt::SkipEmptyParts));
+    }
 };
 struct PortRequirement {
     QString protocol;

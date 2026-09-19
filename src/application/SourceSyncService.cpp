@@ -52,11 +52,12 @@ QString SourceSyncService::git(const SyncRequest &request, const QStringList &ar
         [output](ProcessOutput line) {
             QMutexLocker lock(&output->mutex);
             auto &destination = line.channel == "stdout" ? output->out : output->err;
-            destination += line.text + '\n';
+            destination += line.text + (line.bytes.isEmpty() ? QString("\n") : QString{});
             if (destination.size() > 4 * 1024 * 1024) destination = destination.right(4 * 1024 * 1024);
         });
     try {
         while (!process->empty()) { cancel.check(); clock_.sleep(25, cancel); }
+        process->forceStop();
         const auto result = process->result();
         if (!result || result->crashed || result->exitCode != 0) {
             QMutexLocker lock(&output->mutex);

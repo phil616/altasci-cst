@@ -175,6 +175,8 @@ void AdminPage::rebuild(){
     auto *head=new QLabel("最近 HEAD：尚未同步",page(4));sourceLayout->addWidget(head);sourceLayout->addStretch();connect(&runtime_,&ProjectRuntimeService::headChanged,head,[head](const QString &value){head->setText("最近 HEAD："+value);});
 
     auto *environment=column(page(5));section(environment,"工具与环境","按顺序查找可执行文件。环境文件可包含 KEY=VALUE，并在任务的环境页中引用。");environment->addWidget(fieldEditor("toolDirectories",page(5)));
+    section(environment,"项目环境","项目基础环境与可复用的环境配置；任务通过环境名称引用。");
+    environment->addWidget(fieldEditor("environment",page(5)));environment->addWidget(fieldEditor("environments",page(5)));
     editControls_.append(button("编辑环境文件",environment,[this]{editEnv();}));
     section(environment,"Git 仓库认证","填写仓库账号及访问令牌，然后保存凭据；再到代码同步页测试认证。");
     auto *username=new QLineEdit(page(5));username->setPlaceholderText("Git 仓库用户名");username->setAccessibleName("Git 用户名");auto *password=new QLineEdit(page(5));password->setPlaceholderText("粘贴访问令牌（PAT），保存后自动清空");password->setEchoMode(QLineEdit::Password);password->setAccessibleName("Git PAT");

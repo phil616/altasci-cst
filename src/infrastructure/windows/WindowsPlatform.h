@@ -23,6 +23,7 @@ public:
     std::shared_ptr<IManagedProcess> start(const ProcessSpec &spec, std::function<void(ProcessOutput)> output) override;
     QString resolveExecutable(const QString &program, const QStringList &toolDirectories) const override;
     Environment inheritedEnvironment() const override;
+    QString resolveInEnvironment(const QString &, const Environment &, const QString &) const override;
 private:
     QString signalHelper_;
     Environment inherited_;
