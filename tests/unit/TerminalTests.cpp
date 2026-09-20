@@ -1,10 +1,42 @@
 #include "ui/widgets/TerminalView.h"
 #include <QTest>
 #include <QSignalSpy>
+#include <QClipboard>
+#include <QPushButton>
+#include <QVBoxLayout>
 using namespace cst;
 class TerminalTests final : public QObject {
     Q_OBJECT
 private slots:
+    void styleAndQueryPreserveWrap() {
+        TerminalScreen screen; screen.resize(4, 3);
+        screen.feed("abcd\x1b[31m\x1b[6nE");
+        QCOMPARE(screen.plainText(), "abcd\nE");
+    }
+    void insertOutsideScrollRegion() {
+        TerminalScreen screen; screen.resize(10, 4);
+        screen.feed("one\r\ntwo\r\nthree\r\nfour\x1b[1;2r\x1b[4;1H\x1b[L\x1b[M");
+        QCOMPARE(screen.plainText(), "one\ntwo\nthree\nfour");
+    }
+    void tabReachesTerminal() {
+        QWidget window; QVBoxLayout layout(&window);
+        TerminalView view; QPushButton button("Other action");
+        layout.addWidget(&view); layout.addWidget(&button);
+        window.show(); view.setFocus(); QTest::qWait(20);
+        QSignalSpy input(&view, &TerminalView::input);
+        QTest::keyClick(&view, Qt::Key_Tab);
+        QCOMPARE(input.size(), 1); QCOMPARE(input.last()[0].toByteArray(), QByteArray("\t"));
+        QTest::keyClick(&view, Qt::Key_Backtab);
+        QCOMPARE(input.size(), 2); QCOMPARE(input.last()[0].toByteArray(), QByteArray("\x1b[Z"));
+    }
+    void pasteLineEndingsAndUtf8Boundary() {
+        TerminalView view; QSignalSpy input(&view, &TerminalView::input);
+        QApplication::clipboard()->setText("first\r\nsecond\nthird\rfourth"); view.paste();
+        QCOMPARE(input.last()[0].toByteArray(), QByteArray("first\rsecond\rthird\rfourth"));
+        QApplication::clipboard()->setText(QString(59999, 'a') + QString::fromUtf8("你好"));
+        view.feed("\x1b[?2004h"); view.paste();
+        QCOMPARE(input.last()[0].toByteArray(), QByteArray("\x1b[200~") + QByteArray(59999, 'a') + "\x1b[201~");
+    }
     void progressAndErase() {
         TerminalScreen screen; screen.resize(20, 3); screen.feed("progress 99%\r\x1b[2Kdone\r\nnext");
         QCOMPARE(screen.plainText(), "done\nnext");

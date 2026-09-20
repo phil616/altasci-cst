@@ -105,7 +105,13 @@ private slots:
         const auto colored=QStringLiteral("{\"ts\":\"2026-09-17T12:00:00.000Z\",\"level\":\"info\",\"message\":\"before \\u001b[31merror\\u001b[0m after\"}");
         QVERIFY(formatLogLine(colored).contains("error"));QVERIFY(!formatLogLine(colored).contains(QChar(0x1b)));QVERIFY(formatLogLineHtml(colored).contains("color:#dc2626"));
     }
+    void navigationCancellationAndClose_data(){
+        QTest::addColumn<bool>("closeWhileStopped");
+        QTest::newRow("stopped") << true;
+        QTest::newRow("starting") << false;
+    }
     void navigationCancellationAndClose(){
+        QFETCH(bool, closeWhileStopped);
         QTemporaryDir directory;const auto schema=readJson(CST_SOURCE_DIR "/config/cst-project.schema.json");
         const ProjectPaths paths{"C:/Program Files/CST","C:/ProgramData/CST","C:/Windows"};
         ProjectConfigService configuration(ConfigurationValidator(schema,paths));ProjectCatalogService catalog(directory.path(),configuration);
@@ -152,10 +158,19 @@ private slots:
         for(auto *button:buttons){if(button->text()=="撤销修改")discard=button;if(button->text()=="保存配置")save=button;}
         QVERIFY(discard&&save);QVERIFY(discard->isEnabled());QVERIFY(save->isEnabled());discard->click();QVERIFY(!save->isEnabled());QVERIFY(main->isEnabled());
         window.findChild<QPushButton *>("userNavigation")->click();
+        emit user->consoleRequested("console-test");
+        auto *console = window.findChild<QDialog *>(); QVERIFY(console); QVERIFY(console->isVisible());
+        auto *terminal = console->findChild<TerminalView *>(); QVERIFY(terminal); terminal->feed("retained output");
+        console->close(); QVERIFY(!console->isVisible());
+        emit user->consoleRequested("console-test"); QVERIFY(console->isVisible());
+        QCOMPARE(terminal->plainText(), "retained output");
+        if (closeWhileStopped) {
+            window.close(); QVERIFY(!window.isVisible()); QVERIFY(!console->isVisible()); return;
+        }
         runtime.start();QCOMPARE(main->text(),"一键停止");QCOMPARE(runtime.state(),ProjectState::Preflight);
         for(auto *editor:admin->findChildren<SchemaEditor *>())QVERIFY(!editor->isEnabled());
         QSignalSpy close(&runtime,&ProjectRuntimeService::closeReady);window.close();QVERIFY(window.isVisible());
-        QTRY_VERIFY(!window.isVisible());QCOMPARE(close.count(),1);QVERIFY(supervisor.empty());
+        QTRY_VERIFY(!window.isVisible());QVERIFY(!console->isVisible());QCOMPARE(close.count(),1);QVERIFY(supervisor.empty());
     }
 };
 QTEST_MAIN(UiTests)

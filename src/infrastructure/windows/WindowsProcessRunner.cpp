@@ -62,14 +62,9 @@ public:
             if (FAILED(status)) win::fail("CreatePseudoConsole", static_cast<DWORD>(status));
             if (!UpdateProcThreadAttribute(attributes.get(), 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
                                            console_.value, sizeof(HPCON), nullptr, nullptr)) win::fail("Pseudoconsole attribute");
-            // The pseudoconsole owns the child's standard handles. Without STARTF_USESTDHANDLES the child
-            // inherits this process' handles instead whenever the host runs with redirected stdio (the test
-            // runner, or any cst.exe started with a shell redirection), so the shell never talks to the
-            // terminal. Declaring the handles invalid makes Windows bind them to the pseudoconsole.
-            startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-            startup.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
-            startup.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
-            startup.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
+            // ConPTY supplies console handles. STARTF_USESTDHANDLES would instead
+            // force the supplied handles (including INVALID_HANDLE_VALUE) on the child.
+            // Keep stdio redirection exclusively in the pipes branch below.
             stderrDone_.store(true);
         } else {
             pipe(stderr_, errWrite);
@@ -88,7 +83,7 @@ public:
         if (command.size() >= 32767 || command.contains(QChar::Null)) throw std::invalid_argument("无效或过长的 Windows 命令行");
         auto environment = environmentBlock(spec.environment); PROCESS_INFORMATION information{};
         if (!CreateProcessW(win::wide(spec.program), reinterpret_cast<wchar_t *>(command.data()), nullptr, nullptr, spec.terminal ? FALSE : TRUE,
-                            flags, environment.data(), win::wide(spec.workingDirectory), &startup.StartupInfo, &information)) win::fail("CreateProcess：" + spec.program);
+                            flags, environment.data(), spec.workingDirectory.isEmpty() ? nullptr : win::wide(spec.workingDirectory), &startup.StartupInfo, &information)) win::fail("CreateProcess：" + spec.program);
         process_.reset(information.hProcess); win::Handle thread(information.hThread); pid_ = information.dwProcessId;
         if (!AssignProcessToJobObject(job_.get(), process_.get())) {
             const auto error = GetLastError(); TerminateProcess(process_.get(), win::forcedExit); WaitForSingleObject(process_.get(), 5000);
@@ -257,6 +252,8 @@ WindowsProcessRunner::WindowsProcessRunner(QString helper) : signalHelper_(std::
 std::shared_ptr<IManagedProcess> WindowsProcessRunner::start(const ProcessSpec &spec, std::function<void(ProcessOutput)> output) {
     if (!isWindowsAbsolutePath(spec.program) || !spec.program.endsWith(".exe", Qt::CaseInsensitive))
         throw std::invalid_argument("托管进程需要原生 EXE 绝对路径；批处理请使用 shell 模式");
+    if (!spec.workingDirectory.isEmpty() && !QFileInfo(spec.workingDirectory).isDir())
+        throw std::runtime_error(("工作目录不存在或不是目录：" + spec.workingDirectory).toUtf8().constData());
     return std::make_shared<ManagedProcess>(spec, signalHelper_, std::move(output));
 }
 Environment WindowsProcessRunner::inheritedEnvironment() const { return inherited_; }

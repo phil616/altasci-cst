@@ -89,8 +89,9 @@ void TerminalScreen::csi(QChar final) {
     const bool privateMode = sequence_.startsWith('?');
     const auto params = (privateMode ? sequence_.mid(1) : sequence_).split(';');
     const auto n = [&](int i, int fallback = 1) { const int value = i < params.size() ? params[i].toInt() : 0; return value ? value : fallback; };
-    const int count = std::min(n(0), 1000); const int mode = n(0, 0);
-    pendingWrap_ = false;
+    const int count = std::clamp(n(0), 1, 1000); const int mode = n(0, 0);
+    // Styling and terminal queries must not cancel a pending automatic wrap.
+    if (QStringLiteral("ABCDEFGdHfJKXP@LMSTur").contains(final)) pendingWrap_ = false;
     switch (final.unicode()) {
     case 'A': y_ = std::max(0, y_ - count); break;
     case 'B': y_ = std::min(rows_ - 1, y_ + count); break;
@@ -110,7 +111,7 @@ void TerminalScreen::csi(QChar final) {
     case 'X': for (int col = x_; col < std::min(columns_, x_ + count); ++col) screen_[y_][col] = blank(); break;
     case 'P': for (int col = x_; col < columns_; ++col) screen_[y_][col] = col + count < columns_ ? screen_[y_][col + count] : blank(); break;
     case '@': for (int col = columns_ - 1; col >= x_; --col) screen_[y_][col] = col - count >= x_ ? screen_[y_][col - count] : blank(); break;
-    case 'L': case 'M': { const int oldTop = top_; top_ = y_; for (int i = 0; i < std::min(count, rows_); ++i) scroll(final == 'L' ? -1 : 1); top_ = oldTop; break; }
+    case 'L': case 'M': { if (y_ < top_ || y_ > bottom_) break; const int oldTop = top_; top_ = y_; for (int i = 0; i < std::min(count, rows_); ++i) scroll(final == 'L' ? -1 : 1); top_ = oldTop; break; }
     case 'S': case 'T': for (int i = 0; i < std::min(count, rows_); ++i) scroll(final == 'S' ? 1 : -1); break;
     case 's': savedX_ = x_; savedY_ = y_; break;
     case 'u': x_ = std::clamp(savedX_, 0, columns_ - 1); y_ = std::clamp(savedY_, 0, rows_ - 1); break;
@@ -169,6 +170,16 @@ TerminalView::TerminalView(QWidget *parent) : QAbstractScrollArea(parent) {
 void TerminalView::reset() { const auto columns = screen_.columns(), rows = screen_.rows(); screen_ = TerminalScreen(); screen_.resize(columns, rows); emit terminalResized(columns, rows); screen_.reply = [this](QByteArray bytes) { if (inputEnabled_) emit input(bytes); }; updateScroll(); viewport()->update(); }
 void TerminalView::updateScroll() { const bool bottom = verticalScrollBar()->value() == verticalScrollBar()->maximum(); verticalScrollBar()->setRange(0, screen_.historySize()); if (bottom) verticalScrollBar()->setValue(verticalScrollBar()->maximum()); }
 void TerminalView::feed(const QByteArray &bytes) { screen_.feed(bytes); updateScroll(); viewport()->update(); }
+bool TerminalView::event(QEvent *event) {
+    // QWidget consumes Tab for focus traversal before keyPressEvent is called.
+    if (event->type() == QEvent::KeyPress) {
+        auto *key = static_cast<QKeyEvent *>(event);
+        if (key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab) {
+            keyPressEvent(key); key->accept(); return true;
+        }
+    }
+    return QAbstractScrollArea::event(event);
+}
 void TerminalView::paintEvent(QPaintEvent *) {
     QPainter painter(viewport()); painter.fillRect(viewport()->rect(), QColor("#0F172A")); painter.setFont(font());
     const int offset = verticalScrollBar()->value();
@@ -191,8 +202,14 @@ void TerminalView::resizeEvent(QResizeEvent *event) {
 }
 void TerminalView::paste() {
     if (!inputEnabled_) return;
-    auto bytes = QApplication::clipboard()->text().toUtf8();
-    if (bytes.size() > 60000) bytes.truncate(60000);
+    auto text = QApplication::clipboard()->text();
+    text.replace("\r\n", "\n"); text.replace('\r', '\n'); text.replace('\n', '\r');
+    auto bytes = text.toUtf8();
+    if (bytes.size() > 60000) {
+        qsizetype end = 60000;
+        while (end > 0 && (static_cast<unsigned char>(bytes[end]) & 0xc0) == 0x80) --end;
+        bytes.truncate(end);
+    }
     if (screen_.bracketedPaste()) bytes = "\x1b[200~" + bytes + "\x1b[201~";
     emit input(bytes);
 }

@@ -9,6 +9,20 @@ using namespace cst;
 class ConfigTests final : public QObject {
     Q_OBJECT
 private slots:
+    void projectDirectoryAndRelativeActivationAreRunnable() {
+        ProjectConfigService config(ConfigurationValidator(readJson(CST_SOURCE_DIR "/config/cst-project.schema.json"), {}));
+        auto document = config.load(CST_SOURCE_DIR "/config/runtime-v2.example.json");
+        auto project = document["project"].toObject(); auto tasks = project["tasks"].toArray(); auto task = tasks[0].toObject();
+        auto command = task["serviceCommand"].toObject(); command.remove("workingDirectory");
+        task["serviceCommand"] = command; tasks[0] = task; project["tasks"] = tasks; document["project"] = project;
+        QVERIFY(config.validateForRun(document).isEmpty());
+        command["mode"] = "shell"; command.remove("venv"); command.remove("arguments");
+        command["script"] = "python -m app"; command["activationScript"] = ".venv/Scripts/activate.bat";
+        task["serviceCommand"] = command; tasks[0] = task; project["tasks"] = tasks; document["project"] = project;
+        QVERIFY(config.validateForRun(document).isEmpty());
+        project["source"] = QJsonObject{}; document["project"] = project;
+        QVERIFY(!config.validateForRun(document).isEmpty());
+    }
     void persistence() {
         QTemporaryDir directory;
         QVERIFY(directory.isValid());

@@ -85,7 +85,9 @@ ProcessSpec LaunchPlanner::resolve(const QJsonObject &rawProject, const QJsonObj
     ProcessSpec plan;
     plan.projectId = project.value("id").toString(); plan.taskId = task.value("id").toString(); plan.operationId = runId;
     plan.attemptId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    plan.workingDirectory = pathAt(command.value("workingDirectory").toString(), project.value("source").toObject().value("workingDirectory").toString());
+    const auto root = project.value("source").toObject().value("workingDirectory").toString();
+    const auto directory = command.value("workingDirectory").toString();
+    plan.workingDirectory = pathAt(directory.isEmpty() ? root : directory, root);
     plan.environment = environment(project, task, command);
     const auto io = command.value("io").toObject();
     plan.terminal = io.value("mode").toString() == "terminal";
@@ -105,7 +107,13 @@ ProcessSpec LaunchPlanner::resolve(const QJsonObject &rawProject, const QJsonObj
             script = batchWord(command.value("program").toString());
             for (const auto &arg : arguments) script += ' ' + batchWord(arg);
         }
-        if (!activation.isEmpty()) script = "call " + batchWord(pathAt(activation, plan.workingDirectory)) + " && " + script;
+        if (!activation.isEmpty()) {
+            const auto path = pathAt(activation, plan.workingDirectory);
+            if (!QFileInfo(path).isFile()) fail("激活脚本不存在：" + path + "\n.venv 项目可使用 python-venv 模式；其他环境请检查激活脚本相对于命令工作目录的位置。");
+            if (!path.endsWith(".bat", Qt::CaseInsensitive) && !path.endsWith(".cmd", Qt::CaseInsensitive))
+                fail("cmd 激活脚本必须是 .bat 或 .cmd 文件；Python .venv 请选择 python-venv 模式。");
+            script = "call " + batchWord(normalizeWindowsPathInput(path)) + " && " + script;
+        }
         plan.shellCommandLine = "/D /V:OFF /S /C \"" + script + '"';
     } else if (mode == "python-venv") {
         const auto venv = pathAt(command.value("venv").toString(), plan.workingDirectory);
@@ -114,14 +122,26 @@ ProcessSpec LaunchPlanner::resolve(const QJsonObject &rawProject, const QJsonObj
         if (variables.contains("PYTHONHOME")) plan.environment.remove("PYTHONHOME");
         plan.environment["VIRTUAL_ENV"] = venv;
         plan.environment["PATH"] = venv + "/Scripts;" + plan.environment.value("PATH");
-        plan.program = resolve(venv + "/Scripts/python.exe"); plan.arguments = arguments;
+        try { plan.program = resolve(venv + "/Scripts/python.exe"); }
+        catch (const std::exception &e) {
+            fail("Python 虚拟环境不可用：" + venv + "\n请先在准备命令中执行 python -m venv 或 uv venv 创建 Windows 环境；从其他机器复制的环境可能需要重建。\n" + QString::fromUtf8(e.what()));
+        }
+        plan.arguments = arguments;
+        if (!plan.environment.contains("PYTHONUNBUFFERED")) plan.environment["PYTHONUNBUFFERED"] = "1";
+        if (!plan.terminal && plan.encoding == "utf-8" && !plan.environment.contains("PYTHONIOENCODING"))
+            plan.environment["PYTHONIOENCODING"] = "utf-8";
     } else if (mode == "uv") {
         plan.program = resolve(command.value("program").toString().isEmpty() ? "uv.exe" : command.value("program").toString());
         plan.arguments = QStringList{"run"} + strings(command.value("toolArguments").toArray()) + QStringList{"--"} + arguments;
     } else if (mode == "npm") {
         plan.program = resolve(command.value("program").toString().isEmpty() ? "node.exe" : command.value("program").toString());
+        // npm lifecycle scripts invoke `node` again; they must use this Node even
+        // when it was selected by an absolute path outside the inherited PATH.
+        auto nodePath = plan.program; nodePath.replace('\\', '/');
+        const auto nodeDirectory = nodePath.left(nodePath.lastIndexOf('/'));
+        if (nodePath.contains('/')) plan.environment["PATH"] = nodeDirectory + ';' + plan.environment.value("PATH");
         auto cli = command.value("npmCli").toString();
-        if (cli.isEmpty()) cli = QFileInfo(plan.program).absolutePath() + "/node_modules/npm/bin/npm-cli.js";
+        if (cli.isEmpty()) cli = nodeDirectory + "/node_modules/npm/bin/npm-cli.js";
         else cli = pathAt(cli, plan.workingDirectory);
         if (!QFileInfo(cli).isFile()) fail("找不到此 Node 安装的 npm-cli.js，请配置 npmCli：" + cli);
         const auto action = command.value("npmAction").toString("run");

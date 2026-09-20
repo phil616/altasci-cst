@@ -10,14 +10,63 @@ class RecordingRunner final : public IProcessRunner {
 public:
     mutable Environment selected;
     mutable QString cwd;
+    QString missingProgram;
     std::shared_ptr<IManagedProcess> start(const ProcessSpec &, std::function<void(ProcessOutput)>) override { throw std::runtime_error("not used"); }
     QString resolveExecutable(const QString &program, const QStringList &) const override { return program; }
-    QString resolveInEnvironment(const QString &program, const Environment &environment, const QString &directory) const override { selected = environment; cwd = directory; return program; }
+    QString resolveInEnvironment(const QString &program, const Environment &environment, const QString &directory) const override {
+        selected = environment; cwd = directory;
+        if (!missingProgram.isEmpty() && program.contains(missingProgram)) throw std::runtime_error("executable missing");
+        return program;
+    }
     Environment inheritedEnvironment() const override { return {{"PATH", "C:/global"}, {"SYSTEMROOT", "C:/Windows"}, {"COMSPEC", "C:/Windows/System32/cmd.exe"}, {"SECRET_AMBIENT", "not inherited"}}; }
 };
 class LaunchTests final : public QObject {
     Q_OBJECT
 private slots:
+    void workingDirectoryFallsBackToProject() {
+        RecordingRunner runner; LaunchPlanner planner(runner, {});
+        const QJsonObject project{{"source", QJsonObject{{"workingDirectory", "C:/project with spaces"}}}};
+        auto plan = planner.resolve(project, {}, {{"mode", "python-venv"}, {"venv", ".venv"}}, "run");
+        QCOMPARE(plan.workingDirectory, "C:/project with spaces");
+        QCOMPARE(plan.program, "C:/project with spaces/.venv/Scripts/python.exe");
+        plan = planner.resolve(project, {}, {{"program", "tool.exe"}, {"workingDirectory", "backend"}}, "run");
+        QCOMPARE(plan.workingDirectory, "C:/project with spaces/backend");
+    }
+    void missingVenvExplainsHowToRecover() {
+        RecordingRunner runner; runner.missingProgram = "Scripts/python.exe"; LaunchPlanner planner(runner, {});
+        try { planner.resolve({}, {}, {{"mode", "python-venv"}, {"workingDirectory", "C:/project"}, {"venv", ".venv"}}, "run"); QFAIL("Expected failure"); }
+        catch (const std::runtime_error &e) {
+            const auto message = QString::fromUtf8(e.what());
+            QVERIFY(message.contains("C:/project/.venv")); QVERIFY(message.contains("python -m venv")); QVERIFY(message.contains("executable missing"));
+        }
+    }
+    void venvEnvironmentAndExplicitEncoding() {
+        RecordingRunner runner; LaunchPlanner planner(runner, {});
+        QJsonObject cmd{{"mode", "python-venv"}, {"workingDirectory", "C:/project"}, {"venv", ".venv"},
+                        {"environment", QJsonObject{{"variables", QJsonObject{{"PYTHONHOME", "C:/wrong"}}}}}};
+        auto plan = planner.resolve({}, {}, cmd, "run");
+        QVERIFY(!plan.environment.contains("PYTHONHOME")); QCOMPARE(plan.environment.value("PYTHONUNBUFFERED"), "1");
+        QCOMPARE(plan.environment.value("PYTHONIOENCODING"), "utf-8");
+        cmd["environment"] = QJsonObject{{"variables", QJsonObject{{"PYTHONIOENCODING", "gbk"}, {"PYTHONUNBUFFERED", "0"}}}};
+        plan = planner.resolve({}, {}, cmd, "run");
+        QCOMPARE(plan.environment.value("PYTHONIOENCODING"), "gbk"); QCOMPARE(plan.environment.value("PYTHONUNBUFFERED"), "0");
+    }
+    void relativeActivationAndMissingScript() {
+        QTemporaryDir dir; QFile file(dir.filePath("activate.cmd")); QVERIFY(file.open(QIODevice::WriteOnly)); file.close();
+        RecordingRunner runner; LaunchPlanner planner(runner, {});
+        QJsonObject cmd{{"mode", "shell"}, {"script", "python -m app"}, {"workingDirectory", dir.path()}, {"activationScript", "activate.cmd"}};
+        const auto plan = planner.resolve({}, {}, cmd, "run");
+        QVERIFY(plan.shellCommandLine.contains("call \"" + normalizeWindowsPathInput(file.fileName()) + "\" && python -m app"));
+        cmd["activationScript"] = "missing.bat";
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, planner.resolve({}, {}, cmd, "run"));
+    }
+    void npmChildProcessesUseSelectedNode() {
+        QTemporaryDir dir; QFile cli(dir.filePath("npm-cli.js")); QVERIFY(cli.open(QIODevice::WriteOnly)); cli.close();
+        RecordingRunner runner; LaunchPlanner planner(runner, {});
+        const auto plan = planner.resolve({}, {}, {{"mode", "npm"}, {"program", "C:\\Node Custom\\node.exe"},
+            {"npmCli", cli.fileName()}, {"script", "dev"}}, "run");
+        QCOMPARE(plan.environment.value("PATH"), "C:/Node Custom;C:/global");
+    }
     void finalEnvironmentDrivesLookup() {
         RecordingRunner runner; LaunchPlanner planner(runner, {});
         QJsonObject task{{"environment", QJsonObject{{"inheritSystem", false}, {"variables", QJsonObject{{"Path", "C:/chosen"}}}}}};

@@ -38,9 +38,14 @@ public:
     void writeInput(const QString &, const QByteArray &) override;
     void resizeTerminal(const QString &, int, int) override;
 private:
+    struct AttemptOutput {
+        std::mutex mutex;
+        QString tail;
+    };
     struct Task {
         QJsonObject configuration;
         std::shared_ptr<IManagedProcess> process;
+        std::shared_ptr<AttemptOutput> output;
         RestartBudget budget;
         QString state = "Stopped";
         std::optional<qint64> startedAt;
@@ -63,7 +68,9 @@ private:
     bool stopping_ = false;
     mutable std::mutex sessionsMutex_;
     QMap<QString, std::shared_ptr<IManagedProcess>> sessions_;
-    std::function<void(ProcessOutput)> consumer(const ProcessSpec &);
+    std::function<void(ProcessOutput)> consumer(const ProcessSpec &, const std::shared_ptr<AttemptOutput> &);
+    std::shared_ptr<IManagedProcess> spawn(const ProcessSpec &, const std::shared_ptr<AttemptOutput> &);
+    QString failureDetails(const std::optional<ProcessResult> &, const std::shared_ptr<AttemptOutput> &) const;
     void waitReady(Task &, const Cancellation &);
     void registerSession(const QString &, const std::shared_ptr<IManagedProcess> &);
 };

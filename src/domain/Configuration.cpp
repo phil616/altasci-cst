@@ -384,7 +384,11 @@ ValidationIssues ConfigurationValidator::validate(const QJsonObject &document) c
                 if (!isWindowsAbsolutePath(cwd) && directory.isEmpty()) fail(cp + "workingDirectory", "相对工作目录需要项目源码目录");
             }
             const auto activation = command.value("activationScript").toString().trimmed();
-            if (nonEmpty(activation)) absolute(activation, cp + "activationScript", true);
+            if (nonEmpty(activation)) {
+                const auto scriptPath = expanded(activation, cp + "activationScript");
+                if (!isWindowsAbsolutePath(scriptPath) && commandDirectory.isEmpty() && directory.isEmpty())
+                    fail(cp + "activationScript", "相对激活脚本需要命令工作目录或项目源码目录");
+            }
             const auto mode = command.value("mode").toString();
             if (command.contains("timeoutMs")) {
                 const auto timeout = command.value("timeoutMs").toInt();
@@ -467,7 +471,8 @@ ValidationIssues ConfigurationValidator::validateForRun(const QJsonObject &docum
             const auto command = commands[j].toObject();
             const auto cp = path + (j == prepareCount ? QString("serviceCommand/") : "prepareCommands/" + QString::number(j) + '/');
             if (command.isEmpty()) { fail(cp, "必须配置执行命令"); continue; }
-            if (!nonEmpty(command.value("workingDirectory").toString())) fail(cp + "workingDirectory", "命令工作目录不能为空");
+            if (!nonEmpty(command.value("workingDirectory").toString()) && !nonEmpty(source.value("workingDirectory").toString()))
+                fail(cp + "workingDirectory", "请配置命令工作目录或项目源码目录");
             const auto mode = command.value("mode").toString();
             if (!QStringList{"exec", "shell", "python-venv", "uv", "npm"}.contains(mode)) fail(cp + "mode", "请选择运行方式");
             if (mode == "exec" && !nonEmpty(command.value("program").toString())) fail(cp + "program", "必须配置程序");

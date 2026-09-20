@@ -85,6 +85,7 @@ MainWindow::Console &MainWindow::console(const QString &task) {
         auto *copy = new QPushButton("复制输出", window); actions->addWidget(copy);
         auto *paste = new QPushButton("粘贴", window); actions->addWidget(paste);
         auto *interrupt = new QPushButton("发送 Ctrl+C", window); actions->addWidget(interrupt);
+        for (auto *button : {copy, paste, interrupt}) button->setAutoDefault(false);
         actions->addWidget(new QLabel("关闭此窗口不会停止任务；关闭主窗口会停止整个项目。", window), 1);
         connect(copy, &QPushButton::clicked, view, [view] { QApplication::clipboard()->setText(view->plainText()); });
         connect(paste, &QPushButton::clicked, view, &TerminalView::paste);
@@ -107,7 +108,7 @@ void MainWindow::closeEvent(QCloseEvent *event){
             const auto answer=QMessageBox::warning(this,"放弃未保存修改？","管理配置中有未保存修改。退出将丢失这些修改，确定退出？",QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel);
             if(answer!=QMessageBox::Yes){event->ignore();return;}
         }
-        mayClose_=true;event->accept();return;
+        mayClose_=true;for(const auto &item:consoles_)item.window->hide();event->accept();return;
     }
     event->ignore();pages_->setEnabled(false);positionClosingOverlay();closingOverlay_->show();closingOverlay_->raise();runtime_.close();
 }

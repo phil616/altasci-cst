@@ -11,6 +11,7 @@
 #include <QNetworkReply>
 #include <QEventLoop>
 #include <QTimer>
+#include <QRegularExpression>
 
 namespace cst {
 namespace {
@@ -20,7 +21,12 @@ TaskSupervisor::TaskSupervisor(IProcessRunner &runner, IClock &clock, ProjectPat
     : runner_(runner), clock_(clock), paths_(std::move(paths)) {}
 QJsonObject TaskSupervisor::expand(const QJsonObject &object) const { return LaunchPlanner(runner_, paths_).expand(object, project_); }
 ProcessSpec TaskSupervisor::command(const QJsonObject &task, const QJsonObject &spec) const {
-    return LaunchPlanner(runner_, paths_).resolve(project_, task, spec, operationId_);
+    try { return LaunchPlanner(runner_, paths_).resolve(project_, task, spec, operationId_); }
+    catch (const std::exception &e) {
+        taskError("解析命令失败：任务 " + task.value("name").toString(task.value("id").toString()) +
+                  " / " + spec.value("name").toString(spec.value("id").toString()) +
+                  "（" + spec.value("mode").toString("exec") + "）\n" + QString::fromUtf8(e.what()));
+    }
 }
 void TaskSupervisor::notify(Task &task, const QString &state) {
     task.state = state;
@@ -49,7 +55,8 @@ void TaskSupervisor::prepare(Task &task, const QJsonObject &spec, const Cancella
     notify(task, "Preparing");
     const auto processSpec = command(task.configuration, spec);
     log(processSpec.taskId, "执行准备命令：" + spec.value("name").toString() + " | " + processSpec.program + ' ' + processSpec.arguments.join(' ') + " | 工作目录：" + processSpec.workingDirectory);
-    preparing_ = runner_.start(processSpec, consumer(processSpec));
+    const auto diagnostic = std::make_shared<AttemptOutput>();
+    preparing_ = spawn(processSpec, diagnostic);
     registerSession(processSpec.taskId, preparing_);
     const auto deadline = clock_.monotonicMs() + spec.value("timeoutMs").toInt();
     while (preparing_->rootRunning()) {
@@ -60,7 +67,11 @@ void TaskSupervisor::prepare(Task &task, const QJsonObject &spec, const Cancella
     const auto result = preparing_->result();
     preparing_->forceStop();
     preparing_.reset();
-    if (!result || result->crashed || !spec.value("successExitCodes").toArray().contains(double(result->exitCode))) taskError("准备命令失败：" + spec.value("name").toString());
+    if (!result || result->crashed || !spec.value("successExitCodes").toArray().contains(double(result->exitCode))) {
+        notify(task, "Failed");
+        taskError("命令失败：" + task.configuration.value("name").toString() + " / " + spec.value("name").toString(spec.value("id").toString()) +
+                  "\n程序：" + processSpec.program + "\n工作目录：" + processSpec.workingDirectory + "\n" + failureDetails(result, diagnostic));
+    }
 }
 void TaskSupervisor::launch(Task &task, const Cancellation &cancel) {
     cancel.check();
@@ -70,7 +81,8 @@ void TaskSupervisor::launch(Task &task, const Cancellation &cancel) {
     const auto commandText = spec.shellCommandLine.isEmpty() ? (spec.program + ' ' + spec.arguments.join(' ')) : (spec.program + ' ' + spec.shellCommandLine);
     log(taskId, "启动服务命令：" + commandText + " | 工作目录：" + spec.workingDirectory);
     task.startedAt = clock_.monotonicMs();
-    task.process = runner_.start(spec, consumer(spec));
+    task.output = std::make_shared<AttemptOutput>();
+    task.process = spawn(spec, task.output);
     registerSession(spec.taskId, task.process);
     log(taskId, "服务进程已创建，PID=" + QString::number(task.process->rootPid()));
     notify(task, "Running");
@@ -105,11 +117,14 @@ void TaskSupervisor::start(const QJsonObject &project, const QString &operationI
     }
     tasks_ = std::move(sorted);
     for (auto &task : tasks_) {
-        for (const auto &prepareSpec : task.configuration.value("prepareCommands").toArray()) { cancel.check(); prepare(task, prepareSpec.toObject(), cancel); }
-        if (task.configuration.value("kind").toString() == "task") {
-            prepare(task, task.configuration.value("serviceCommand").toObject(), cancel);
-            notify(task, "Completed");
-        } else launch(task, cancel);
+        try {
+            for (const auto &prepareSpec : task.configuration.value("prepareCommands").toArray()) { cancel.check(); prepare(task, prepareSpec.toObject(), cancel); }
+            if (task.configuration.value("kind").toString() == "task") {
+                prepare(task, task.configuration.value("serviceCommand").toObject(), cancel);
+                notify(task, "Completed");
+            } else launch(task, cancel);
+        } catch (const Cancelled &) { throw; }
+        catch (const std::exception &) { notify(task, "Failed"); throw; }
     }
     tick(cancel);
 }
@@ -132,21 +147,19 @@ void TaskSupervisor::tick(const Cancellation &cancel) {
         if ((task.process->rootRunning() || (tree && success)) && !task.process->treeEmpty()) continue;
         const auto result = task.process->result();
         const auto uptime = task.startedAt ? clock_.monotonicMs() - *task.startedAt : 0;
-        QString exitText = "退出状态未知";
-        if (result) exitText = result->crashed ? "异常退出代码 " + QString::number(result->exitCode) : "退出代码 " + QString::number(result->exitCode);
-        log(task.configuration.value("id").toString(), "服务进程" + exitText + "，运行 " + QString::number(uptime) + " ms");
         task.process->forceStop();
+        log(task.configuration.value("id").toString(), "服务进程退出，运行 " + QString::number(uptime) + " ms\n" + failureDetails(result, task.output));
         const auto restart = task.configuration.value("restartPolicy").toObject();
         const auto mode = restart.value("mode").toString("always");
         if (mode == "never" || (mode == "on_failure" && success)) {
             notify(task, success ? "Exited" : "Failed");
-            taskError("长期服务已退出：" + task.configuration.value("name").toString() + "（" + exitText + "）");
+            taskError("长期服务已退出：" + task.configuration.value("name").toString() + "\n" + failureDetails(result, task.output));
         }
         const auto resetSeconds = restart.value("resetAfterSeconds").toInt();
         if (resetSeconds > 0 && uptime >= qint64(resetSeconds) * 1000) task.budget.reset();
         const auto delay = task.budget.schedule(clock_.monotonicMs());
         if (!delay) {
-            const auto message = "服务重启次数超过滑动窗口限制，任务失败：" + task.configuration.value("name").toString();
+            const auto message = "服务重启次数超过滑动窗口限制，任务失败：" + task.configuration.value("name").toString() + "\n" + failureDetails(result, task.output);
             log(task.configuration.value("id").toString(), message);
             notify(task, "Failed");
             throw std::runtime_error(message.toUtf8().constData());
@@ -157,8 +170,39 @@ void TaskSupervisor::tick(const Cancellation &cancel) {
     }
 }
 
-std::function<void(ProcessOutput)> TaskSupervisor::consumer(const ProcessSpec &spec) {
-    return [this, spec](ProcessOutput item) {
+std::shared_ptr<IManagedProcess> TaskSupervisor::spawn(const ProcessSpec &spec, const std::shared_ptr<AttemptOutput> &diagnostic) {
+    try { return runner_.start(spec, consumer(spec, diagnostic)); }
+    catch (const std::exception &e) {
+        taskError("创建进程失败：任务 " + spec.taskId + "\n程序：" + spec.program + "\n工作目录：" + spec.workingDirectory +
+                  "\nConsole：" + (spec.terminal ? QString("terminal") : QString("pipes")) + "\n" + QString::fromUtf8(e.what()));
+    }
+}
+QString TaskSupervisor::failureDetails(const std::optional<ProcessResult> &result, const std::shared_ptr<AttemptOutput> &diagnostic) const {
+    QString detail = "退出状态未知";
+    if (result) {
+        const auto code = static_cast<quint32>(result->exitCode);
+        detail = QString("%1 %2（0x%3）").arg(result->crashed ? "异常退出代码" : "退出代码").arg(result->exitCode)
+                     .arg(code, 8, 16, QLatin1Char('0'));
+        if (code == 0xc0000135u) detail += "\n缺少运行时 DLL；请检查该工具的安装和依赖路径。";
+        if (code == 0xc0000142u) detail += "\n进程初始化失败；请检查 Console 初始化及该工具的运行环境。";
+    }
+    if (diagnostic) {
+        QString tail;
+        { std::lock_guard lock(diagnostic->mutex); tail = diagnostic->tail; }
+        // Remove common VT presentation sequences from the diagnostic excerpt.
+        tail.remove(QRegularExpression(QStringLiteral("\x1b\\[[0-?]*[ -/]*[@-~]")));
+        tail.remove(QRegularExpression(QStringLiteral("\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)")));
+        if (!tail.trimmed().isEmpty()) detail += "\n最后输出：\n" + tail.trimmed();
+    }
+    return detail;
+}
+std::function<void(ProcessOutput)> TaskSupervisor::consumer(const ProcessSpec &spec, const std::shared_ptr<AttemptOutput> &diagnostic) {
+    return [this, spec, diagnostic](ProcessOutput item) {
+        if (diagnostic && (item.channel == "stdout" || item.channel == "stderr" || item.channel == "terminal")) {
+            std::lock_guard lock(diagnostic->mutex);
+            diagnostic->tail += item.text.right(8192);
+            if (diagnostic->tail.size() > 8192) diagnostic->tail = diagnostic->tail.right(8192);
+        }
         item.projectId = spec.projectId; item.runId = spec.operationId; item.attemptId = spec.attemptId;
         if (output) output(spec.taskId, std::move(item));
     };
@@ -184,7 +228,10 @@ void TaskSupervisor::waitReady(Task &task, const Cancellation &cancel) {
     const auto deadline = clock_.monotonicMs() + probe.value("timeoutMs").toInt(30000);
     while (clock_.monotonicMs() < deadline) {
         cancel.check();
-        if (task.process->treeEmpty()) taskError("就绪前进程已退出：" + task.configuration.value("name").toString());
+        if (task.process->treeEmpty()) {
+            const auto result = task.process->result(); task.process->forceStop();
+            taskError("就绪前进程已退出：" + task.configuration.value("name").toString() + "\n" + failureDetails(result, task.output));
+        }
         bool ready = false;
         if (type == "tcp") {
             QTcpSocket socket; socket.connectToHost(probe.value("host").toString(), quint16(probe.value("port").toInt()));

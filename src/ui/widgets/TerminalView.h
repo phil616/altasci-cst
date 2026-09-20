@@ -51,6 +51,7 @@ signals:
     void input(QByteArray bytes);
     void terminalResized(int columns, int rows);
 protected:
+    bool event(QEvent *event) override;
     void paintEvent(QPaintEvent *) override;
     void resizeEvent(QResizeEvent *) override;
     void keyPressEvent(QKeyEvent *) override;

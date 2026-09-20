@@ -46,15 +46,45 @@ private slots:
         Environment env = runner.inheritedEnvironment(); env["PATH"] = dir.path() + "/.venv/Scripts";
         QVERIFY(runner.resolveInEnvironment("python", env, dir.path()).contains(".venv"));
     }
+    void uvProjectAndNpmLifecycle_data() {
+        QTest::addColumn<bool>("terminal");
+        QTest::newRow("pipes") << false;
+        QTest::newRow("terminal") << true;
+    }
     void uvProjectAndNpmLifecycle() {
+        QFETCH(bool, terminal);
         QTemporaryDir dir; WindowsProcessRunner runner(helper_); LaunchPlanner planner(runner, {});
         write(dir.filePath("pyproject.toml"), "[project]\nname='cst-fixture'\nversion='0.0.0'\nrequires-python='>=3.12'\n");
         auto plan = planner.resolve({}, {}, {{"mode", "uv"}, {"program", uv_}, {"workingDirectory", dir.path()}, {"toolArguments", QJsonArray{"--python", python_}}, {"arguments", QJsonArray{"python", "-c", "import sys;print('UV_PREFIX='+sys.prefix)"}}}, "uv");
+        plan.terminal = terminal; plan.inputEnabled = terminal;
         const auto output = execute(runner, plan); QVERIFY(output.contains("UV_PREFIX=")); QVERIFY(output.contains(".venv"));
         write(dir.filePath("package.json"), "{\"name\":\"cst-fixture\",\"version\":\"0.0.0\",\"scripts\":{\"precheck\":\"node -e \\\"console.log('PRE')\\\"\",\"check\":\"node check.cjs\",\"postcheck\":\"node -e \\\"console.log('POST')\\\"\"}}");
         write(dir.filePath("check.cjs"), "console.log('NPM_ARG='+JSON.stringify(process.argv.slice(2)));console.log('BIN='+process.env.PATH.includes('node_modules'));\n");
-        plan = planner.resolve({}, {}, {{"mode", "npm"}, {"program", node_}, {"workingDirectory", dir.path()}, {"script", "check"}, {"arguments", QJsonArray{"hello world"}}}, "npm");
+        plan = planner.resolve({}, {}, {{"mode", "npm"}, {"program", node_}, {"workingDirectory", dir.path()}, {"script", "check"}, {"arguments", QJsonArray{"hello world"}},
+            {"environment", QJsonObject{{"inheritSystem", false}, {"variables", QJsonObject{{"PATH", qEnvironmentVariable("SystemRoot") + "/System32"}}}}}}, "npm");
+        plan.terminal = terminal; plan.inputEnabled = terminal;
         const auto npm = execute(runner, plan); QVERIFY(npm.contains("PRE")); QVERIFY(npm.contains("POST")); QVERIFY(npm.contains("hello world")); QVERIFY(npm.contains("BIN=true"));
+    }
+    void shellActivationUsesProjectDirectory_data() {
+        QTest::addColumn<bool>("terminal");
+        QTest::newRow("pipes") << false;
+        QTest::newRow("terminal") << true;
+    }
+    void shellActivationUsesProjectDirectory() {
+        QFETCH(bool, terminal);
+        QTemporaryDir dir(QDir::tempPath() + "/CST 中文 venv XXXXXX"); QVERIFY(dir.isValid());
+        WindowsProcessRunner runner(helper_); LaunchPlanner planner(runner, {});
+        execute(runner, planner.resolve({}, {}, {{"mode", "exec"}, {"program", python_}, {"workingDirectory", dir.path()},
+            {"arguments", QJsonArray{"-m", "venv", ".venv", "--without-pip"}}}, "setup"));
+        write(dir.filePath("check.py"), "import os,sys\nassert sys.prefix != sys.base_prefix\nassert os.path.exists('check.py')\nprint('VENV_OK', flush=True)\n");
+        const QJsonObject project{{"source", QJsonObject{{"workingDirectory", dir.path()}}}};
+        auto plan = planner.resolve(project, {}, {{"mode", "shell"}, {"activationScript", ".venv/Scripts/activate.bat"},
+            {"script", "python check.py"}}, "shell");
+        plan.terminal = terminal; plan.inputEnabled = terminal;
+        QVERIFY(execute(runner, plan).contains("VENV_OK"));
+        plan = planner.resolve(project, {}, {{"mode", "python-venv"}, {"venv", ".venv"}, {"arguments", QJsonArray{"check.py"}}}, "venv");
+        plan.terminal = terminal; plan.inputEnabled = terminal;
+        QVERIFY(execute(runner, plan).contains("VENV_OK"));
     }
     void conptyInputResizeAndCleanup() {
         QTemporaryDir dir; WindowsProcessRunner runner(helper_); LaunchPlanner planner(runner, {}); QMutex mutex; QByteArray output;

@@ -69,10 +69,13 @@ public:
     QStringList shellCommandLines;
     QList<std::shared_ptr<TestProcess>> services;
     QString failCommand;
+    QString failToStart;
+    QString processOutput;
     QString gitVersion = "git version 2.55.0.windows.1";
     QString head = QString(40, 'a');
     bool gitMode = false;
     std::shared_ptr<IManagedProcess> start(const ProcessSpec &spec, std::function<void(ProcessOutput)> output) override {
+        if (spec.program == failToStart && !failToStart.isEmpty()) throw std::runtime_error("CreateProcess (Win32 267): invalid directory");
         auto process = std::make_shared<TestProcess>();
         if (gitMode) {
             process->alive = false;
@@ -88,6 +91,7 @@ public:
         paths.append(spec.environment.value("PATH"));
         shellCommandLines.append(spec.shellCommandLine);
         process->stopped = [this, name = spec.program] { events.append("stop:" + name); };
+        if (output && !processOutput.isEmpty()) output({"stderr", processOutput, false, {}});
         if (spec.program.contains("prepare")) { process->alive = false; if (spec.program == failCommand) process->exit = 1; }
         else services.append(process);
         return process;
@@ -111,6 +115,43 @@ QJsonObject project(quint16 port) {
 class ServiceTests final : public QObject {
     Q_OBJECT
 private slots:
+    void failedPreparationIncludesExitAndOutput() {
+        TestRunner runner; runner.failCommand = "first-prepare";
+        runner.processOutput = QString(20000, 'x') + "\x1b[31mModuleNotFoundError: missing_dependency\x1b[0m";
+        TestClock clock; Cancellation cancel; TaskSupervisor supervisor(runner, clock, {});
+        try { supervisor.start(project(0), "run", cancel); QFAIL("Expected failure"); }
+        catch (const std::runtime_error &e) {
+            const auto message = QString::fromUtf8(e.what());
+            QVERIFY(message.contains("first-prepare")); QVERIFY(message.contains("C:/project/prepare"));
+            QVERIFY(message.contains("0x00000001")); QVERIFY(message.contains("ModuleNotFoundError: missing_dependency"));
+            QVERIFY(!message.contains(QChar(0x1b))); QVERIFY(message.size() < 9000);
+        }
+        supervisor.stop();
+    }
+    void spawnFailureIncludesCommandContext() {
+        TestRunner runner; runner.failToStart = "first-serve";
+        TestClock clock; Cancellation cancel; TaskSupervisor supervisor(runner, clock, {});
+        try { supervisor.start(project(0), "run", cancel); QFAIL("Expected failure"); }
+        catch (const std::runtime_error &e) {
+            const auto message = QString::fromUtf8(e.what());
+            QVERIFY(message.contains("first-serve")); QVERIFY(message.contains("C:/project/service"));
+            QVERIFY(message.contains("Win32 267")); QVERIFY(message.contains("pipes"));
+        }
+        supervisor.stop();
+    }
+    void restartLogsFailureBeforeNextAttempt() {
+        TestRunner runner; runner.processOutput = "The system cannot find the path specified.";
+        TestClock clock; Cancellation cancel; TaskSupervisor supervisor(runner, clock, {});
+        QStringList logs;
+        supervisor.output = [&](const QString &, ProcessOutput out) { if (out.channel == "cst") logs.append(out.text); };
+        supervisor.start(project(0), "run", cancel);
+        runner.services[0]->alive = false; runner.services[0]->exit = 1;
+        supervisor.tick(cancel);
+        QCOMPARE(supervisor.statuses().first().state, "Restarting");
+        QVERIFY(logs.join('\n').contains("The system cannot find the path specified."));
+        QVERIFY(logs.join('\n').contains("0x00000001"));
+        supervisor.stop();
+    }
     void executionOrderAndRestart() {
         QTcpServer endpoint; QVERIFY(endpoint.listen(QHostAddress::LocalHost));
         TestRunner runner; TestClock clock; Cancellation cancel;
@@ -163,6 +204,8 @@ private slots:
         supervisor.stop(); QVERIFY(supervisor.empty()); QCOMPARE(runner.events.last(), "stop:first-serve");
     }
     void activationScriptWrapsExecAndShellCommands() {
+        QTemporaryDir directory; QFile activation(directory.filePath("activate.bat"));
+        QVERIFY(activation.open(QIODevice::WriteOnly)); activation.close();
         TestRunner runner; TestClock clock; Cancellation cancel;
         TaskSupervisor supervisor(runner, clock, {});
         auto taskObject = task("venv", 10, 0);
@@ -171,7 +214,7 @@ private slots:
         service["program"] = "python.exe";
         service["arguments"] = QJsonArray{"-m", "app"};
         service["workingDirectory"] = "C:/project/service";
-        service["activationScript"] = "C:/venv/Scripts/activate.bat";
+        service["activationScript"] = activation.fileName();
         service["timeoutMs"] = 0;
         service["successExitCodes"] = QJsonArray{0};
         taskObject["serviceCommand"] = service;
@@ -185,7 +228,7 @@ private slots:
         supervisor.start(document["project"].toObject(), "operation", cancel);
         QVERIFY(!runner.shellCommandLines.isEmpty());
         const auto line = runner.shellCommandLines.last();
-        QVERIFY(line.contains("call \"C:/venv/Scripts/activate.bat\""));
+        QVERIFY(line.contains("call \"" + normalizeWindowsPathInput(activation.fileName()) + "\""));
         QVERIFY(line.contains("\"python.exe\""));
         QVERIFY(line.contains("\"-m\"") && line.contains("\"app\""));
         supervisor.stop();
