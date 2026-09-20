@@ -62,9 +62,13 @@ public:
             if (FAILED(status)) win::fail("CreatePseudoConsole", static_cast<DWORD>(status));
             if (!UpdateProcThreadAttribute(attributes.get(), 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
                                            console_.value, sizeof(HPCON), nullptr, nullptr)) win::fail("Pseudoconsole attribute");
-            // ConPTY supplies console handles. STARTF_USESTDHANDLES would instead
-            // force the supplied handles (including INVALID_HANDLE_VALUE) on the child.
-            // Keep stdio redirection exclusively in the pipes branch below.
+            // Explicitly clear redirected host stdio: otherwise children retain the
+            // runtime/test runner's file handles instead of using their new console.
+            // Null handles are populated when Windows attaches the pseudoconsole.
+            startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+            startup.StartupInfo.hStdInput = nullptr;
+            startup.StartupInfo.hStdOutput = nullptr;
+            startup.StartupInfo.hStdError = nullptr;
             stderrDone_.store(true);
         } else {
             pipe(stderr_, errWrite);

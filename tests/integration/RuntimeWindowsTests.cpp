@@ -37,6 +37,7 @@ private slots:
         QVERIFY2(QFile::exists(node_), "Node/npm required for runtime integration tests");
     }
     void venvPreparationAndFinalEnvironment() {
+        try {
         QTemporaryDir dir(QDir::tempPath() + "/CST 中文 runtime XXXXXX"); QVERIFY(dir.isValid());
         WindowsProcessRunner runner(helper_); LaunchPlanner planner(runner, {});
         execute(runner, planner.resolve({}, {}, {{"mode", "exec"}, {"program", python_}, {"workingDirectory", dir.path()}, {"arguments", QJsonArray{"-m", "venv", ".venv", "--without-pip"}}}, "setup"));
@@ -45,6 +46,7 @@ private slots:
         QVERIFY(result.value("exe").toString().contains(".venv")); QCOMPARE(result.value("arg").toArray(), QJsonArray({"", "a b", "a&b", "%PATH%", "x!y", "tail\\", "a\"b"}));
         Environment env = runner.inheritedEnvironment(); env["PATH"] = dir.path() + "/.venv/Scripts";
         QVERIFY(runner.resolveInEnvironment("python", env, dir.path()).contains(".venv"));
+        } catch (const std::exception &error) { QFAIL(error.what()); }
     }
     void uvProjectAndNpmLifecycle_data() {
         QTest::addColumn<bool>("terminal");
@@ -52,6 +54,7 @@ private slots:
         QTest::newRow("terminal") << true;
     }
     void uvProjectAndNpmLifecycle() {
+        try {
         QFETCH(bool, terminal);
         QTemporaryDir dir; WindowsProcessRunner runner(helper_); LaunchPlanner planner(runner, {});
         write(dir.filePath("pyproject.toml"), "[project]\nname='cst-fixture'\nversion='0.0.0'\nrequires-python='>=3.12'\n");
@@ -64,6 +67,7 @@ private slots:
             {"environment", QJsonObject{{"inheritSystem", false}, {"variables", QJsonObject{{"PATH", qEnvironmentVariable("SystemRoot") + "/System32"}}}}}}, "npm");
         plan.terminal = terminal; plan.inputEnabled = terminal;
         const auto npm = execute(runner, plan); QVERIFY(npm.contains("PRE")); QVERIFY(npm.contains("POST")); QVERIFY(npm.contains("hello world")); QVERIFY(npm.contains("BIN=true"));
+        } catch (const std::exception &error) { QFAIL(error.what()); }
     }
     void shellActivationUsesProjectDirectory_data() {
         QTest::addColumn<bool>("terminal");
@@ -71,6 +75,7 @@ private slots:
         QTest::newRow("terminal") << true;
     }
     void shellActivationUsesProjectDirectory() {
+        try {
         QFETCH(bool, terminal);
         QTemporaryDir dir(QDir::tempPath() + "/CST 中文 venv XXXXXX"); QVERIFY(dir.isValid());
         WindowsProcessRunner runner(helper_); LaunchPlanner planner(runner, {});
@@ -85,8 +90,10 @@ private slots:
         plan = planner.resolve(project, {}, {{"mode", "python-venv"}, {"venv", ".venv"}, {"arguments", QJsonArray{"check.py"}}}, "venv");
         plan.terminal = terminal; plan.inputEnabled = terminal;
         QVERIFY(execute(runner, plan).contains("VENV_OK"));
+        } catch (const std::exception &error) { QFAIL(error.what()); }
     }
     void conptyInputResizeAndCleanup() {
+        try {
         QTemporaryDir dir; WindowsProcessRunner runner(helper_); LaunchPlanner planner(runner, {}); QMutex mutex; QByteArray output;
         auto plan = planner.resolve({}, {}, {{"mode", "exec"}, {"program", python_}, {"workingDirectory", dir.path()}, {"arguments", QJsonArray{"-u", "-c", "import sys;print('TTY='+str(sys.stdin.isatty()),flush=True);print('PROMPT>',end='',flush=True);s=input();print('ECHO='+s,flush=True)"}}, {"io", QJsonObject{{"mode", "terminal"}}}}, "terminal");
         auto process = runner.start(plan, [&](ProcessOutput item) { QMutexLocker lock(&mutex); output += item.bytes; });
@@ -95,14 +102,17 @@ private slots:
         process->resizeTerminal(120, 40); process->writeInput("hello\r");
         QTRY_VERIFY_WITH_TIMEOUT(contains("ECHO=hello"), 10000);
         QTRY_VERIFY_WITH_TIMEOUT(process->treeEmpty(), 10000); process->forceStop(); QVERIFY(process->empty());
+        } catch (const std::exception &error) { QFAIL(error.what()); }
     }
     void rootExitPreservesOwnedDescendantUntilStopped() {
+        try {
         QTemporaryDir dir; WindowsProcessRunner runner(helper_); LaunchPlanner planner(runner, {});
         auto plan = planner.resolve({}, {}, {{"mode", "exec"}, {"program", python_}, {"workingDirectory", dir.path()}, {"arguments", QJsonArray{"-c", "import subprocess,sys;subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'])"}}}, "tree");
         auto process = runner.start(plan, {}); QTRY_VERIFY_WITH_TIMEOUT(!process->rootRunning(), 10000);
         QVERIFY(!process->treeEmpty()); const auto pids = process->processIds(); QVERIFY(!pids.isEmpty());
         process->stop(100); QVERIFY(process->treeEmpty());
         for (const auto pid : pids) { HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, pid); if (h) { QCOMPARE(WaitForSingleObject(h, 0), DWORD(WAIT_OBJECT_0)); CloseHandle(h); } }
+        } catch (const std::exception &error) { QFAIL(error.what()); }
     }
 };
 QTEST_GUILESS_MAIN(RuntimeWindowsTests)

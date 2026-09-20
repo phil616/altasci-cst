@@ -9,6 +9,7 @@ class RuntimeTests final : public QObject {
     Q_OBJECT
 private slots:
     void independentHostStartOutputInputStopAndLock() {
+        try {
         QTemporaryDir directory; qputenv("CST_FIXTURE_STORAGE", directory.path().toUtf8());
         QString executable = QCoreApplication::applicationDirPath() + "/cst-test-runtime-host";
 #ifdef Q_OS_WIN
@@ -24,8 +25,10 @@ private slots:
         client.resizeTerminal("server", 90, 30); client.writeInput("server", "ignored"); QVERIFY(!client.empty());
         client.stop(); QVERIFY(client.empty()); QVERIFY(locked.tryLock(0)); locked.unlock();
         client.stop(); QVERIFY(client.empty());
+        } catch (const std::exception &error) { QFAIL(error.what()); }
     }
     void cancellingPreparationCleansUp() {
+        try {
         QTemporaryDir directory; qputenv("CST_FIXTURE_STORAGE", directory.path().toUtf8());
         QString executable = QCoreApplication::applicationDirPath() + "/cst-test-runtime-host";
 #ifdef Q_OS_WIN
@@ -38,6 +41,7 @@ private slots:
         cancel.requested.store(true);
         QVERIFY_THROWS_EXCEPTION(Cancelled, client.start(project, "cancelled-run", cancel));
         client.stop(); QVERIFY(client.empty());
+        } catch (const std::exception &error) { QFAIL(error.what()); }
     }
 };
 QTEST_GUILESS_MAIN(RuntimeTests)

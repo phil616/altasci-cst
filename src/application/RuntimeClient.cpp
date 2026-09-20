@@ -16,14 +16,15 @@ RuntimeClient::RuntimeClient(const QString &executable) {
     host_.setArguments({server_, QString::number(QCoreApplication::applicationPid())});
     host_.setStandardOutputFile(QProcess::nullDevice()); host_.setStandardErrorFile(QProcess::nullDevice());
     host_.start();
-    if (!host_.waitForStarted(5000)) throw std::runtime_error("无法启动 cst-runtime.exe");
+    if (!host_.waitForStarted(5000)) throw std::runtime_error(("无法启动运行宿主：" + executable + "\n" + host_.errorString()).toUtf8().constData());
     QElapsedTimer timer; timer.start();
+    QString lastError;
     while (timer.elapsed() < 5000) {
         try { request({{"command", "snapshot"}}); return; }
-        catch (...) { if (host_.waitForFinished(25)) break; }
+        catch (const std::exception &e) { lastError = QString::fromUtf8(e.what()); if (host_.waitForFinished(25)) break; }
     }
     host_.kill(); host_.waitForFinished(5000);
-    throw std::runtime_error("运行宿主握手失败");
+    throw std::runtime_error(("运行宿主握手失败：" + lastError).toUtf8().constData());
 }
 RuntimeClient::~RuntimeClient() {
     try { stop(); request({{"command", "shutdown"}}); } catch (...) {}
@@ -32,7 +33,7 @@ RuntimeClient::~RuntimeClient() {
 QJsonObject RuntimeClient::request(QJsonObject message) const {
     message["version"] = 1; message["token"] = token_;
     QLocalSocket socket; socket.connectToServer(server_);
-    if (!socket.waitForConnected(1000)) throw std::runtime_error("运行宿主连接已断开");
+    if (!socket.waitForConnected(1000)) throw std::runtime_error(("运行宿主连接失败：" + socket.errorString()).toUtf8().constData());
     const auto bytes = QJsonDocument(message).toJson(QJsonDocument::Compact) + '\n';
     socket.write(bytes);
     QElapsedTimer timer; timer.start();
